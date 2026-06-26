@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAPITAL HOLDINGS · Simulador Económico</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: { fontFamily: { mono: ['ui-monospace','SFMono-Regular','Menlo','Consolas','monospace'] } } } };
+</script>
+<style>
+  html,body{height:100%;}
+  body{background:#0a0e14;color:#cbd5e1;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-track{background:#0a0e14;}
+  ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:4px;}
+  ::-webkit-scrollbar-thumb:hover{background:#334155;}
+  .term{background:#000;color:#22c55e;font-family:ui-monospace,monospace;}
+  .term .l{padding:1px 0;line-height:1.35;}
+  .tabbtn.active{background:#1e293b;color:#fff;border-color:#3b82f6;}
+  .card{background:#0f1622;border:1px solid #1e293b;}
+  .mini{background:#0b111b;border:1px solid #1c2636;}
+  input[type=number]{background:#0b111b;border:1px solid #334155;color:#e2e8f0;}
+  .bar{background:#1e293b;border-radius:9999px;overflow:hidden;}
+  .bar>div{height:100%;transition:width .2s linear;}
+  table{font-variant-numeric:tabular-nums;}
+  .pos{color:#22c55e;} .neg{color:#ef4444;} .warn{color:#f59e0b;}
+  button:disabled{opacity:.35;cursor:not-allowed;}
+  .glow{box-shadow:0 0 0 1px rgba(59,130,246,.3);}
+</style>
+</head>
+<body class="text-sm">
+<div class="h-full flex flex-col">
+
+  <!-- HEADER -->
+  <header class="flex items-center gap-3 px-4 py-2 border-b border-slate-800 bg-[#0c121d] flex-wrap">
+    <div class="font-bold tracking-tight text-white text-base">CAPITAL<span class="text-blue-500">HOLDINGS</span></div>
+    <div class="text-xs text-slate-400 font-mono" id="hdrDate">—</div>
+    <div class="text-xs font-mono px-2 py-0.5 rounded mini" id="hdrPhase">—</div>
+    <div class="text-xs font-mono px-2 py-0.5 rounded mini">Tasa BC: <span id="hdrRate" class="text-amber-400">—</span></div>
+    <div class="text-xs font-mono px-2 py-0.5 rounded mini">Inflación: <span id="hdrInfl" class="text-rose-400">—</span></div>
+    <div class="ml-auto flex items-center gap-1" id="speedCtl">
+      <span class="text-xs text-slate-500 mr-1">Velocidad:</span>
+      <button data-spd="0"  class="spd px-2 py-1 rounded mini text-xs hover:bg-slate-700">⏸ Pausa</button>
+      <button data-spd="1"  class="spd px-2 py-1 rounded mini text-xs hover:bg-slate-700">1x</button>
+      <button data-spd="2"  class="spd px-2 py-1 rounded mini text-xs hover:bg-slate-700">2x</button>
+      <button data-spd="5"  class="spd px-2 py-1 rounded mini text-xs hover:bg-slate-700">5x</button>
+      <button data-spd="10" class="spd px-2 py-1 rounded mini text-xs hover:bg-slate-700">10x</button>
+    </div>
+  </header>
+
+  <!-- BODY: 3 columns -->
+  <div class="flex-1 grid grid-cols-12 gap-3 p-3 overflow-hidden">
+
+    <!-- LEFT 25% -->
+    <aside class="col-span-3 overflow-y-auto pr-1 space-y-3" id="leftCol"></aside>
+
+    <!-- CENTER 50% -->
+    <main class="col-span-6 flex flex-col overflow-hidden">
+      <nav class="flex gap-1 mb-2">
+        <button data-tab="empleo"   class="tabbtn active flex-1 px-3 py-2 rounded border border-slate-700 text-xs font-semibold">👔 PERSONAL</button>
+        <button data-tab="realestate" class="tabbtn flex-1 px-3 py-2 rounded border border-slate-700 text-xs font-semibold">🏠 BIENES RAÍCES</button>
+        <button data-tab="bolsa"    class="tabbtn flex-1 px-3 py-2 rounded border border-slate-700 text-xs font-semibold">📈 BOLSA</button>
+        <button data-tab="empresas" class="tabbtn flex-1 px-3 py-2 rounded border border-slate-700 text-xs font-semibold">🏢 CORPORACIONES</button>
+        <button data-tab="banco"    class="tabbtn flex-1 px-3 py-2 rounded border border-slate-700 text-xs font-semibold">🏦 BANCO</button>
+      </nav>
+      <section class="flex-1 overflow-y-auto pr-1" id="centerCol"></section>
+    </main>
+
+    <!-- RIGHT 25% -->
+    <aside class="col-span-3 flex flex-col overflow-hidden">
+      <div class="text-xs font-bold text-green-500 mb-1 px-1 font-mono">▌TERMINAL DE NOTICIAS E HISTORIAL ECONÓMICO</div>
+      <div id="terminal" class="term flex-1 overflow-y-auto rounded border border-green-900/40 p-2 text-[11px]"></div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   CAPITAL HOLDINGS — Simulador económico hiper-realista (single file)
+   Motor de ticks (1 tick = 1 día), macroeconomía cíclica, finanzas, bienes
+   raíces, bolsa apalancada, corporaciones y banca. Sin alert/confirm/modales.
+============================================================================ */
+
+/* ---------------------------- Utilidades ---------------------------------- */
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const rnd = (a,b) => a + Math.random()*(b-a);
+const rint = (a,b) => Math.floor(rnd(a,b+1));
+const pick = arr => arr[Math.floor(Math.random()*arr.length)];
+const chance = p => Math.random() < p;
+// Ruido gaussiano (Box-Muller)
+function gauss(mean=0, sd=1){ let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random(); return mean + sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+const money = n => (n<0?'-':'') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US');
+const money2 = n => (n<0?'-':'') + '$' + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const pctf = n => (n>=0?'+':'') + n.toFixed(2) + '%';
+const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+/* ------------------------------ Estado ------------------------------------ */
+const S = {
+  day: 0,
+  date: new Date(2025,0,1),
+  speed: 0,
+  timer: null,
+  tab: 'empleo',
+  log: [],
+
+  macro: { phase:'Expansión', phaseTicks:0, phaseLen:rint(200,600), baseRate:0.035, targetRate:0.05, inflation:0.032 },
+
+  player: {
+    cash: 500,
+    creditScore: 600,
+    energy: 100,
+    mental: 100,
+    working: false,
+    resting: false,
+    restDays: 0,
+    // empleo
+    jobTier: 1,                // empleo actual (0 = desempleado)
+    unlocked: [1],             // tiers desbloqueados
+    study: null,               // {tier, need, done}
+    // vivienda: 0=habitacion,1=depto,2=casa, o {own:idx} si habita propiedad
+    housing: 0,
+    livingInProperty: -1,      // índice de propiedad habitada (-1 = ninguna)
+    daysWorked: 0,
+    totalEarned: 0,
+  },
+
+  debt: {
+    student:  { bal:12000, rate:0.065 },     // préstamo universitario
+    card:     { bal:0,     rate:0.24  },     // tarjeta de crédito
+  },
+  mortgages: [],   // {propId, bal, rate, monthly, termLeft}
+  loans: [],       // préstamos comerciales {bal, rate, id}
+
+  properties: [],  // propiedades compradas
+
+  stocks: {},      // ver init
+  holdings: {},    // por símbolo: {shares, avgCost, mShares, mLoan, mEntry}
+
+  corps: [],       // empresas fundadas
+
+  // contadores mensuales
+  billDay: 30,
+  rentDay: 30,
+};
+
+/* Catálogo de empleos */
+const JOBS = [
+  null,
+  { tier:1, name:'Operario',        wage:12,  studyNeed:0   },
+  { tier:2, name:'Administrativo',  wage:22,  studyNeed:60  },
+  { tier:3, name:'Programador',     wage:45,  studyNeed:160 },
+  { tier:4, name:'Gerente',         wage:85,  studyNeed:320 },
+  { tier:5, name:'Director Ejecutivo', wage:210, studyNeed:520 },
+];
+
+/* Vivienda en alquiler (Pestaña A) */
+const HOUSING = [
+  { name:'Habitación', rent:400, comfort:0 },
+  { name:'Departamento', rent:1100, comfort:1 },
+  { name:'Casa', rent:2800, comfort:2 },
+];
+
+/* Catálogo de bienes raíces */
+const REALTY = [
+  { name:'Estudio',                 price:85000,  rent:780,  type:'Residencial' },
+  { name:'Depto 2 ambientes',       price:165000, rent:1450, type:'Residencial', livable:true },
+  { name:'Local Comercial',         price:240000, rent:2350, type:'Comercial' },
+  { name:'Edificio de Oficinas',    price:920000, rent:9200, type:'Comercial' },
+];
+
+/* Tipologías de empresa */
+const CORP_TYPES = [
+  { id:'kiosco',  name:'Kiosco / Retail Físico', cap:5000,  basePrice:6,   baseQ:30, desc:'Bajo capital, margen bajo, demanda constante.' },
+  { id:'mkt',     name:'Agencia de Marketing',   cap:15000, basePrice:1200,baseQ:40, desc:'Escala contratando empleados. Alta rentabilidad.' },
+  { id:'saas',    name:'SaaS / Software',        cap:50000, basePrice:49,  baseQ:25, desc:'I+D intenso 100 ticks; replicación a coste $0 (exponencial).' },
+  { id:'vc',      name:'Fondo de Capital Riesgo',cap:250000,basePrice:0,   baseQ:0,  desc:'Sólo con patrimonio neto > $1M. Rinde sobre el capital colocado.' },
+];
+
+/* ------------------------- Inicialización bolsa --------------------------- */
+function initStocks(){
+  S.stocks = {
+    TBOND: { name:'Bonos del Tesoro', sym:'TBOND', price:100, prev:100, vol:0.0005, kind:'bond', hist:[] },
+    SPX:   { name:'Índice S&P 500',   sym:'SPX',   price:450, prev:450, vol:0.011, drift:0.08, kind:'index', hist:[] },
+    ALPHA: { name:'Corp Alpha (Blue Chip)', sym:'ALPHA', price:120, prev:120, vol:0.006, drift:0.04, div:0.03, kind:'blue', hist:[] },
+    BIOGEN:{ name:'BioGen (Tech)',    sym:'BIOGEN',price:64, prev:64, vol:0.032, drift:0.12, kind:'tech', hist:[] },
+    SOLAR: { name:'Solarium (Cripto)',sym:'SOLAR', price:9.5, prev:9.5, vol:0.06, kind:'crypto', regime:'normal', regimeTicks:0, hist:[] },
+  };
+  for(const k in S.stocks){ S.holdings[k] = { shares:0, avgCost:0, mShares:0, mLoan:0, mEntry:0 }; const st=S.stocks[k]; for(let i=0;i<40;i++) st.hist.push(st.price); }
+}
+
+/* ------------------------------- LOG -------------------------------------- */
+function fmtDate(){ const d=S.date; return `${String(d.getDate()).padStart(2,'0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; }
+function log(msg, cls=''){
+  const stamp = `[${fmtDate()}]`;
+  S.log.push({ t:stamp, m:msg, c:cls });
+  if(S.log.length>400) S.log.shift();
+  const term = $('terminal');
+  if(term){
+    const line = document.createElement('div');
+    line.className = 'l ' + (cls==='neg'?'text-red-400':cls==='pos'?'text-emerald-400':cls==='warn'?'text-amber-400':cls==='info'?'text-sky-400':'text-green-500');
+    line.innerHTML = `<span class="text-green-700">${stamp}</span> ${msg}`;
+    term.appendChild(line);
+    while(term.childElementCount>400) term.removeChild(term.firstChild);
+    term.scrollTop = term.scrollHeight;
+  }
+}
+
+/* ============================== MACRO ===================================== */
+function updateMacro(){
+  const m = S.macro;
+  m.phaseTicks++;
+  if(m.phaseTicks >= m.phaseLen){
+    // transición de ciclo: Expansión -> Pico -> Contracción -> Valle -> Expansión
+    const order = ['Expansión','Pico','Contracción','Valle'];
+    const idx = (order.indexOf(m.phase)+1)%4;
+    m.phase = order[idx];
+    m.phaseTicks = 0;
+    m.phaseLen = rint(200,600);
+    const targets = { 'Expansión':rnd(0.035,0.055), 'Pico':rnd(0.075,0.11), 'Contracción':rnd(0.04,0.07), 'Valle':rnd(0.015,0.03) };
+    m.targetRate = targets[m.phase];
+    log(`📊 La economía entra en fase de <b>${m.phase.toUpperCase()}</b>. El Banco Central reorienta su política monetaria.`, 'info');
+  }
+  // la tasa deriva hacia el objetivo con ruido
+  m.baseRate += (m.targetRate - m.baseRate)*0.01 + gauss(0,0.0006);
+  m.baseRate = clamp(m.baseRate, 0.015, 0.11);
+  // inflación según fase
+  const inflTarget = { 'Expansión':0.035, 'Pico':0.065, 'Contracción':0.028, 'Valle':0.012 }[m.phase];
+  m.inflation += (inflTarget - m.inflation)*0.02 + gauss(0,0.0004);
+  m.inflation = clamp(m.inflation, 0.002, 0.14);
+}
+
+/* ============================== FINANZAS ================================== */
+function dailyRate(annual){ return annual/365; }
+
+function accrueDebts(){
+  // Préstamo estudiantil: interés diario. Si hay liquidez, se paga (sube score); si no, se capitaliza (impago).
+  const sl = S.debt.student;
+  if(sl.bal > 0){
+    const i = sl.bal * dailyRate(sl.rate);
+    if(S.player.cash >= i){
+      S.player.cash -= i;
+      S.player.creditScore = clamp(S.player.creditScore + 0.05, 300, 850);
+    } else {
+      sl.bal += i;
+      defaulted('préstamo universitario');
+    }
+  }
+  // Tarjeta de crédito: capitaliza siempre (interés alto). Penaliza score si hay saldo alto.
+  const cc = S.debt.card;
+  if(cc.bal > 0){
+    cc.bal += cc.bal * dailyRate(cc.rate);
+    if(cc.bal > 3000) S.player.creditScore = clamp(S.player.creditScore - 0.06, 300, 850);
+  }
+  // Préstamos comerciales
+  for(const ln of S.loans){
+    if(ln.bal>0){
+      const i = ln.bal*dailyRate(ln.rate);
+      if(S.player.cash >= i){ S.player.cash -= i; S.player.creditScore = clamp(S.player.creditScore+0.03,300,850); }
+      else { ln.bal += i; defaulted('préstamo comercial'); }
+    }
+  }
+  // Hipotecas: interés diario; cuota se cobra mensual
+  for(const mg of S.mortgages){
+    if(mg.bal>0) mg.bal += mg.bal*dailyRate(mg.rate);
+  }
+}
+
+let defaultCooldown = 0;
+function defaulted(what){
+  S.player.creditScore = clamp(S.player.creditScore - 1.2, 300, 850);
+  if(defaultCooldown<=0){
+    log(`⚠️ <b>IMPAGO</b>: no hay liquidez para cubrir intereses de tu ${what}. La deuda se capitaliza y tu puntaje crediticio cae.`, 'neg');
+    defaultCooldown = 20;
+  }
+}
+
+function monthlyBills(){
+  // Costo de vida: alquiler de vivienda (si no habita propiedad propia)
+  if(S.player.livingInProperty < 0){
+    const h = HOUSING[S.player.housing];
+    charge(h.rent, `Alquiler (${h.name})`);
+  }
+  // Cuotas de hipoteca
+  for(const mg of S.mortgages){
+    if(mg.bal>0 && mg.termLeft>0){
+      const pay = Math.min(mg.monthly, mg.bal); // cuota mensual (interés ya capitalizado a diario)
+      if(S.player.cash >= pay){ S.player.cash -= pay; mg.bal = Math.max(0, mg.bal - pay); mg.termLeft--; }
+      else { // no paga cuota -> a tarjeta
+        S.debt.card.bal += pay; S.player.creditScore = clamp(S.player.creditScore-0.6,300,850);
+        log(`🏦 No pudiste cubrir la cuota hipotecaria (${money(pay)}). Se cargó a tu tarjeta de crédito.`, 'neg');
+        mg.termLeft--;
+      }
+      mg.bal = Math.max(0, mg.bal);
+      if(mg.bal<=0) log('🏦 Hipoteca totalmente cancelada. La propiedad es 100% tuya.', 'pos');
+    }
+  }
+}
+
+// Cobro: intenta liquidez, si no alcanza va a tarjeta de crédito
+function charge(amount, concept){
+  if(S.player.cash >= amount){ S.player.cash -= amount; return; }
+  const remainder = amount - S.player.cash;
+  S.player.cash = 0;
+  S.debt.card.bal += remainder;
+  log(`💳 ${concept}: liquidez insuficiente, ${money(remainder)} cargado a tarjeta (24% TNA).`, 'warn');
+}
+
+/* ============================== EMPLEO ==================================== */
+function doWorkTick(){
+  const p = S.player;
+  // recuperación nocturna de energía
+  p.energy = clamp(p.energy + 60, 0, 100);
+  // salud mental: leve recuperación pasiva (mejor con vivienda cómoda)
+  const comfort = p.livingInProperty>=0 ? 2 : HOUSING[p.housing].comfort;
+  p.mental = clamp(p.mental + 1.5 + comfort*0.6, 0, 100);
+
+  if(p.resting){
+    p.restDays--;
+    p.mental = clamp(p.mental + 7, 0, 100);
+    if(p.restDays<=0){ p.resting=false; log('🌴 Vuelves de vacaciones renovado.', 'pos'); }
+    return;
+  }
+  // estudio
+  if(p.study){
+    p.study.done++;
+    if(p.study.done >= p.study.need){
+      p.unlocked.push(p.study.tier);
+      log(`🎓 Completaste la formación para <b>${JOBS[p.study.tier].name}</b>. Ya puedes aceptar ese empleo.`, 'pos');
+      p.study = null;
+    }
+    return; // estudiar a tiempo completo: no se trabaja
+  }
+  // trabajar
+  if(p.working && p.jobTier>0 && p.energy>=50){
+    const job = JOBS[p.jobTier];
+    // salario ajustado por inflación acumulada (los salarios suben con el tiempo)
+    const wage = job.wage * (1 + (S.macro.inflation-0.03)*0.5);
+    const pay = wage*8;
+    p.cash += pay; p.totalEarned += pay; p.daysWorked++;
+    p.energy = clamp(p.energy-50,0,100);
+    p.mental = clamp(p.mental-5,0,100);
+    if(p.mental < 15) burnout();
+  }
+}
+
+function burnout(){
+  const p = S.player;
+  p.jobTier = 0; p.working = false;
+  const med = rint(800,2200);
+  charge(med, 'Gastos médicos por Burnout');
+  p.mental = clamp(p.mental+25,0,100);
+  log(`🧠 <b>BURNOUT</b>: tu salud mental colapsó. Perdiste el empleo y pagaste ${money(med)} en tratamiento médico.`, 'neg');
+}
+
+/* ============================== BOLSA ==================================== */
+function updateStocks(){
+  for(const k in S.stocks){
+    const st = S.stocks[k];
+    st.prev = st.price;
+    if(st.kind==='bond'){
+      // crece con la tasa del BC; precio inverso suave a cambios de tasa
+      st.price *= (1 + dailyRate(S.macro.baseRate));
+    } else if(st.kind==='crypto'){
+      // ciclos de burbuja
+      st.regimeTicks--;
+      if(st.regimeTicks<=0){
+        if(st.regime==='normal' && chance(0.5)){ st.regime='mania'; st.regimeTicks=rint(30,80); log('🚀 <b>Solarium</b> entra en frenesí especulativo. La manía cripto se dispara.', 'warn'); }
+        else if(st.regime==='mania'){ st.regime='crash'; st.regimeTicks=rint(15,40); log('💥 <b>Solarium</b>: estalla la burbuja. Caída libre del activo cripto.', 'neg'); }
+        else { st.regime='normal'; st.regimeTicks=rint(40,120); }
+      }
+      let drift = 0;
+      if(st.regime==='mania') drift = 0.05;
+      else if(st.regime==='crash') drift = -0.06;
+      st.price *= (1 + drift + gauss(0, st.vol));
+      st.price = Math.max(0.05, st.price);
+    } else {
+      const drift = (st.drift||0)/365;
+      // sensibilidad inversa a la tasa para acciones de riesgo
+      const rateDrag = (st.kind==='tech'||st.kind==='index') ? -(S.macro.baseRate-0.04)*0.05/365 : 0;
+      st.price *= (1 + drift + rateDrag + gauss(0, st.vol));
+      st.price = Math.max(0.1, st.price);
+    }
+    st.hist.push(st.price); if(st.hist.length>60) st.hist.shift();
+  }
+  // dividendos diarios de blue chip
+  payDividends();
+  // margin calls
+  checkMargin();
+}
+
+function payDividends(){
+  const al = S.stocks.ALPHA, h = S.holdings.ALPHA;
+  const totShares = h.shares + h.mShares;
+  if(totShares>0){
+    const d = totShares * al.price * dailyRate(al.div);
+    S.player.cash += d;
+  }
+}
+
+function checkMargin(){
+  for(const k in S.holdings){
+    const h = S.holdings[k], st = S.stocks[k];
+    if(h.mShares>0 && st.price <= h.mEntry*0.75){
+      // margin call: liquidación forzosa
+      const proceeds = h.mShares*st.price;
+      const net = proceeds - h.mLoan;
+      S.player.cash += Math.max(0, net);
+      log(`📉 <b>MARGIN CALL</b> en ${st.sym}: el activo cayó 25% desde tu entrada. Posición apalancada liquidada automáticamente. Recuperas ${money(Math.max(0,net))}.`, 'neg');
+      h.mShares=0; h.mLoan=0; h.mEntry=0;
+      S.player.creditScore = clamp(S.player.creditScore-0.4,300,850);
+    }
+  }
+}
+
+/* ============================== BIENES RAÍCES ============================= */
+function realEstateMonthly(){
+  for(const p of S.properties){
+    if(p.mode==='alquilar'){
+      // riesgo de vacancia
+      if(p.vacant>0){ p.vacant--; }
+      else if(chance(0.08)){ p.vacant = rint(1,2); log(`🏚️ Tu ${p.name} quedó vacante (sin inquilino) ~${p.vacant} mes(es).`, 'warn'); }
+      if(p.vacant<=0){
+        const rent = p.rent * (1 + (S.macro.inflation-0.03));
+        S.player.cash += rent;
+        p.collected += rent;
+      }
+      // mantenimiento 1% anual mensualizado + riesgo aleatorio
+      const maint = p.price * 0.01/12 * rnd(0.5,1.6);
+      charge(maint, `Mantenimiento ${p.name}`);
+    }
+  }
+}
+
+/* ============================== CORPORACIONES ============================= */
+function updateCorps(){
+  for(const c of S.corps){
+    if(c.closed) continue;
+    runCorpDay(c);
+  }
+}
+
+function runCorpDay(c){
+  const T = CORP_TYPES.find(t=>t.id===c.type);
+  // I+D / desarrollo SaaS
+  let rndCost = 0;
+  if(c.type==='saas'){
+    if(c.devProgress < 100){
+      rndCost = 350 + c.devProgress*4;
+      c.devProgress = Math.min(100, c.devProgress + rnd(0.8,1.6));
+    }
+  }
+  // inversión I+D activa (sube calidad)
+  if(c.rdSpend>0){ rndCost += c.rdSpend; c.quality = Math.min(100, c.quality + c.rdSpend/2500); }
+
+  // ¿requiere energía del jugador? (sin CEO)
+  let capacity = 1;
+  if(!c.ceo){
+    if(S.player.energy >= 12){ S.player.energy = clamp(S.player.energy-12,0,100); }
+    else { capacity = 0.5; }
+  }
+
+  // demanda en función de precio, calidad y empleados
+  let revenue=0, cogs=0;
+  if(c.type==='vc'){
+    // rinde sobre el capital colocado, atado a mercado + ciclo
+    const base = S.macro.baseRate + 0.06;
+    const swing = gauss(0, 0.0009);
+    revenue = c.capital * (base/365 + swing) * capacity;
+    if(revenue<0 && chance(0.3)) log(`📉 Tu Fondo de Capital Riesgo sufre una desinversión fallida hoy: ${money(revenue)}.`, 'warn');
+  } else if(c.type==='saas'){
+    const developed = c.devProgress>=100;
+    const qualityFactor = 0.5 + c.quality/100;
+    const priceElast = Math.max(0.05, 1 - (c.price-49)/180);
+    const reach = (developed?1:0.15) * (1 + c.vendedores*0.6 + c.operarios*0.1);
+    const users = Math.max(0, 380 * reach * priceElast * qualityFactor * capacity * c.demandMod);
+    revenue = users * c.price/30; // ingreso diario (suscripción mensual prorrateada)
+    cogs = developed ? users*0.02 : users*0.6; // tras desarrollo, replicación ~$0
+  } else if(c.type==='mkt'){
+    const qualityFactor = 0.6 + c.quality/100;
+    const priceElast = Math.max(0.1, 1 - (c.price-1200)/4000);
+    const clients = Math.max(0, (0.4 + c.vendedores*1.1) * priceElast * qualityFactor * capacity * c.demandMod);
+    revenue = clients * c.price/30;
+    cogs = revenue*0.18;
+  } else { // kiosco
+    const qualityFactor = 0.7 + c.quality/100;
+    const priceElast = Math.max(0.05, 1 - (c.price-6)/14);
+    const footfall = (60 + c.vendedores*35 + c.operarios*18) * priceElast * qualityFactor * capacity * c.demandMod;
+    revenue = footfall * c.price;
+    cogs = footfall * (c.price*0.62); // margen bajo
+  }
+
+  // nómina
+  const wages = c.operarios*95 + c.vendedores*130 + (c.ceo?300:0);
+  // alquiler/operación fija
+  const fixed = T.cap*0.0008 + 20;
+
+  const profit = revenue - cogs - wages - fixed - rndCost;
+  c.cash += profit;
+  // historial para EBITDA
+  c.profitHist.push(profit); if(c.profitHist.length>120) c.profitHist.shift();
+  c.revToday = revenue; c.profitToday = profit;
+  c.lifetimeProfit += profit;
+
+  // recuperación de modificador de demanda (eventos)
+  if(c.demandModDays>0){ c.demandModDays--; if(c.demandModDays<=0){ c.demandMod=1; } }
+
+  // quiebra
+  if(c.cash < -2000){
+    c.closed = true;
+    log(`☠️ <b>QUIEBRA</b>: "${c.name}" (${T.name}) no pudo sostener sus costos y cerró operaciones.`, 'neg');
+  }
+}
+
+function corpEBITDA(c){
+  if(c.profitHist.length===0) return 0;
+  const avg = c.profitHist.reduce((a,b)=>a+b,0)/c.profitHist.length;
+  return avg*365;
+}
+function corpValuation(c){
+  if(c.closed) return 0;
+  if(c.type==='vc') return Math.max(c.capital, c.cash + c.capital);
+  return Math.max(0, corpEBITDA(c)*8) + Math.max(0,c.cash);
+}
+
+/* ============================== EVENTOS =================================== */
+const EVENTS = [
+  () => { const v=rint(380,920); chargeEvent(v,`🔧 Un inquilino rompió una tubería. Reparación de emergencia: ${money(v)}.`); },
+  () => { const bps=pick([25,50,75]); S.macro.baseRate=clamp(S.macro.baseRate+bps/10000,0.015,0.11); log(`🏛️ El Banco Central sube ${bps} puntos básicos la tasa para frenar la inflación.`,'info'); },
+  () => { const bps=pick([25,50]); S.macro.baseRate=clamp(S.macro.baseRate-bps/10000,0.015,0.11); log(`🏛️ El Banco Central recorta ${bps} pb la tasa para estimular el crédito.`,'info'); },
+  () => { const c=S.corps.find(x=>!x.closed && x.type==='saas'); if(c){ c.demandMod=0.85; c.demandModDays=40; log(`⚔️ Una startup competidora le roba cuota a tu SaaS "${c.name}" (-15% ventas por 40 días).`,'warn'); } },
+  () => { const v=rint(700,2400); chargeEvent(v,`🧾 Inspección fiscal: deducciones dudosas. Multa de ${money(v)}.`); },
+  () => { const v=rint(150,600); S.player.cash+=v; log(`💸 Reembolso de impuestos inesperado: +${money(v)}.`,'pos'); },
+  () => { S.player.mental=clamp(S.player.mental-12,0,100); log('😞 Una mala racha personal golpea tu salud mental (-12%).','warn'); },
+  () => { const c=S.corps.find(x=>!x.closed); if(c){ c.demandMod=1.25; c.demandModDays=30; log(`🔥 Tu empresa "${c.name}" se vuelve viral: +25% de demanda por 30 días.`,'pos'); } },
+  () => { const st=pick(Object.values(S.stocks).filter(s=>s.kind!=='bond')); st.price*=rnd(1.06,1.14); log(`📈 Rumor de adquisición dispara <b>${st.sym}</b> en bolsa.`,'pos'); },
+  () => { const st=pick(Object.values(S.stocks).filter(s=>s.kind!=='bond')); st.price*=rnd(0.86,0.95); log(`📉 Reporte de pérdidas hunde <b>${st.sym}</b> en bolsa.`,'neg'); },
+  () => { if(S.player.jobTier>0 && chance(0.5)){ const b=rint(300,1500); S.player.cash+=b; log(`🏆 Bono por desempeño en tu empleo: +${money(b)}.`,'pos'); } },
+  () => { const v=rint(120,500); chargeEvent(v,`🚗 Avería del coche / gasto imprevisto: ${money(v)}.`); },
+  () => { const p=S.properties.find(x=>x.mode==='alquilar'); if(p){ p.vacant=rint(1,3); log(`🚪 El inquilino de tu ${p.name} rescindió el contrato. Vacante ~${p.vacant} mes(es).`,'warn'); } },
+  () => { S.player.creditScore=clamp(S.player.creditScore+4,300,850); log('✅ Una agencia corrige un error en tu historial: +4 puntos de score crediticio.','pos'); },
+  () => { const c=S.corps.find(x=>!x.closed); if(c){ const v=rint(2000,9000); c.cash+=v; log(`🤝 "${c.name}" cierra un contrato puntual extraordinario: +${money(v)} a caja de la empresa.`,'pos'); } },
+];
+function chargeEvent(v, msg){ charge(v, 'Evento'); log(msg,'neg'); }
+function maybeEvent(){ if(chance(0.012)) pick(EVENTS)(); }
+
+/* ============================== TICK ====================================== */
+function tick(){
+  S.day++;
+  S.date.setDate(S.date.getDate()+1);
+  if(defaultCooldown>0) defaultCooldown--;
+
+  updateMacro();
+  doWorkTick();
+  accrueDebts();
+  updateStocks();
+  updateCorps();
+
+  // mensualidades
+  S.billDay--;
+  if(S.billDay<=0){ monthlyBills(); realEstateMonthly(); S.billDay=30; }
+
+  maybeEvent();
+
+  render();
+}
+
+/* ============================== NET WORTH ================================ */
+function stockValue(){
+  let v=0;
+  for(const k in S.holdings){ const h=S.holdings[k], st=S.stocks[k]; v += h.shares*st.price; v += h.mShares*st.price - h.mLoan; }
+  return v;
+}
+function propertyEquity(){
+  let v=0;
+  for(const p of S.properties){
+    const mg = S.mortgages.find(m=>m.propId===p.id);
+    v += p.price - (mg?mg.bal:0);
+  }
+  return v;
+}
+function corpsValue(){ return S.corps.reduce((a,c)=>a+corpValuation(c),0); }
+function totalDebt(){
+  let d = S.debt.student.bal + S.debt.card.bal;
+  d += S.loans.reduce((a,l)=>a+l.bal,0);
+  d += S.mortgages.reduce((a,m)=>a+m.bal,0);
+  return d;
+}
+function netWorth(){
+  return S.player.cash + stockValue() + propertyEquity() + corpsValue() - (S.debt.student.bal + S.debt.card.bal + S.loans.reduce((a,l)=>a+l.bal,0));
+  // nota: la hipoteca ya está neteada en propertyEquity
+}
+
+/* ============================== RENDER =================================== */
+function bar(val, max, color){ const w=clamp(val/max*100,0,100); return `<div class="bar h-2"><div style="width:${w}%;background:${color}"></div></div>`; }
+
+function render(){
+  // header
+  $('hdrDate').textContent = `Día ${S.day} · ${fmtDate()}`;
+  $('hdrPhase').innerHTML = `Ciclo: <b class="text-white">${S.macro.phase}</b>`;
+  $('hdrRate').textContent = (S.macro.baseRate*100).toFixed(2)+'%';
+  $('hdrInfl').textContent = (S.macro.inflation*100).toFixed(2)+'%';
+  renderLeft();
+  // sólo re-render del centro si no se está escribiendo en un input
+  const ae = document.activeElement;
+  if(!(ae && ae.tagName==='INPUT' && $('centerCol').contains(ae))) renderCenter();
+}
+
+function renderLeft(){
+  const p = S.player, nw = netWorth();
+  const job = p.jobTier>0 ? JOBS[p.jobTier] : null;
+  const scoreColor = p.creditScore>=750?'#22c55e':p.creditScore>=650?'#84cc16':p.creditScore>=550?'#f59e0b':'#ef4444';
+  const housingTxt = p.livingInProperty>=0 ? (S.properties.find(x=>x.id===p.livingInProperty)?.name||'Propia')+' (propia)' : HOUSING[p.housing].name;
+
+  $('leftCol').innerHTML = `
+    <div class="card rounded-lg p-3">
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-full bg-gradient-to-br from-blue-600 to-indigo-800 flex items-center justify-center text-lg">🧑‍💼</div>
+        <div>
+          <div class="text-white font-semibold">Tú, Inc.</div>
+          <div class="text-xs text-slate-400">${job?job.name+' · '+money(job.wage)+'/h':'Desempleado'}</div>
+        </div>
+      </div>
+      <div class="mt-2 text-xs text-slate-400">Vivienda: <span class="text-slate-200">${housingTxt}</span></div>
+    </div>
+
+    <div class="card rounded-lg p-3 space-y-2">
+      <div>
+        <div class="flex justify-between text-xs"><span>⚡ Energía</span><span>${Math.round(p.energy)}/100</span></div>
+        ${bar(p.energy,100,'#3b82f6')}
+      </div>
+      <div>
+        <div class="flex justify-between text-xs"><span>🧠 Salud Mental</span><span class="${p.mental<25?'neg':''}">${Math.round(p.mental)}%</span></div>
+        ${bar(p.mental,100,p.mental<25?'#ef4444':'#a855f7')}
+      </div>
+      <div>
+        <div class="flex justify-between text-xs"><span>📊 Score Crediticio</span><span style="color:${scoreColor}">${Math.round(p.creditScore)}</span></div>
+        ${bar(p.creditScore-300,550,scoreColor)}
+        <div class="text-[10px] text-slate-500 mt-0.5">${scoreLabel(p.creditScore)}</div>
+      </div>
+    </div>
+
+    <div class="card rounded-lg p-3 space-y-1.5">
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">💵 Liquidez (Caja)</span><span class="font-mono font-semibold ${p.cash<0?'neg':'pos'}">${money2(p.cash)}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">📈 Cartera bursátil</span><span class="font-mono">${money(stockValue())}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">🏠 Equity inmobiliario</span><span class="font-mono">${money(propertyEquity())}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">🏢 Valor corporaciones</span><span class="font-mono">${money(corpsValue())}</span></div>
+      <div class="border-t border-slate-700 my-1"></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">💳 Tarjeta crédito</span><span class="font-mono neg">${money(S.debt.card.bal)}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">🎓 Préstamo univ.</span><span class="font-mono neg">${money(S.debt.student.bal)}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">🏦 Préstamos + hipotecas</span><span class="font-mono neg">${money(S.loans.reduce((a,l)=>a+l.bal,0)+S.mortgages.reduce((a,m)=>a+m.bal,0))}</span></div>
+      <div class="flex justify-between"><span class="text-slate-400 text-xs">Deuda total</span><span class="font-mono neg">${money(totalDebt())}</span></div>
+      <div class="border-t border-slate-700 my-1"></div>
+      <div class="flex justify-between items-center"><span class="text-slate-200 text-sm font-semibold">PATRIMONIO NETO</span><span class="font-mono font-bold text-base ${nw<0?'neg':'pos'}">${money(nw)}</span></div>
+    </div>
+
+    <div class="card rounded-lg p-3">
+      <div class="text-xs text-slate-400 mb-1">Objetivo: Holding Multimillonario</div>
+      ${bar(clamp(nw,0,1e6),1e6,'#f59e0b')}
+      <div class="text-[10px] text-slate-500 mt-1">${nw>=1e6?'🎉 ¡Has superado $1M! Fondos de Capital Riesgo desbloqueados.':'Progreso hacia $1,000,000'}</div>
+    </div>
+  `;
+}
+function scoreLabel(s){ return s>=750?'Excelente — mejores tasas':s>=650?'Bueno — tasas favorables':s>=550?'Regular — tasas altas':'Pobre — crédito restringido'; }
+
+/* ----------------------------- TABS CENTER -------------------------------- */
+function renderCenter(){
+  let html='';
+  if(S.tab==='empleo') html=tabEmpleo();
+  else if(S.tab==='realestate') html=tabRealEstate();
+  else if(S.tab==='bolsa') html=tabBolsa();
+  else if(S.tab==='empresas') html=tabEmpresas();
+  else if(S.tab==='banco') html=tabBanco();
+  $('centerCol').innerHTML = html;
+}
+
+/* ---- PESTAÑA A: PERSONAL Y EMPLEO ---- */
+function tabEmpleo(){
+  const p=S.player;
+  let jobsHtml = JOBS.slice(1).map(j=>{
+    const unlocked = p.unlocked.includes(j.tier);
+    const current = p.jobTier===j.tier;
+    const prevUnlocked = j.tier===1 || p.unlocked.includes(j.tier-1);
+    const studying = p.study && p.study.tier===j.tier;
+    let action='';
+    if(current) action=`<span class="text-xs px-2 py-1 rounded bg-emerald-900/50 text-emerald-400">Empleo actual</span>`;
+    else if(unlocked) action=`<button onclick="acceptJob(${j.tier})" class="text-xs px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white">Aceptar empleo</button>`;
+    else if(studying) action=`<span class="text-xs px-2 py-1 rounded bg-amber-900/40 text-amber-400">Estudiando ${Math.floor(p.study.done)}/${p.study.need}</span>`;
+    else if(prevUnlocked) action=`<button onclick="study(${j.tier})" ${p.study?'disabled':''} class="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Estudiar (${j.studyNeed}d)</button>`;
+    else action=`<span class="text-xs text-slate-600">🔒 Requiere nivel previo</span>`;
+    return `<tr class="border-b border-slate-800">
+      <td class="py-2 ${current?'text-emerald-400 font-semibold':''}">${j.tier}. ${j.name}</td>
+      <td class="text-right font-mono">${money(j.wage)}/h</td>
+      <td class="text-right">${action}</td></tr>`;
+  }).join('');
+
+  return `
+  <div class="space-y-3">
+    <div class="card rounded-lg p-3">
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="font-semibold text-white">Jornada Laboral</h3>
+        <div class="text-xs text-slate-400">${p.resting?'🌴 De vacaciones ('+p.restDays+'d)':p.study?'🎓 Estudiando':p.working?'🟢 Trabajando':'⏸ Sin trabajar'}</div>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="setWork(true)"  ${p.jobTier<=0||p.study||p.resting?'disabled':''} class="px-3 py-1.5 rounded text-xs ${p.working?'bg-emerald-700':'bg-slate-700 hover:bg-slate-600'}">Trabajar (auto)</button>
+        <button onclick="setWork(false)" class="px-3 py-1.5 rounded text-xs bg-slate-700 hover:bg-slate-600">Descansar</button>
+        <button onclick="therapy()"   class="px-3 py-1.5 rounded text-xs bg-purple-800 hover:bg-purple-700">Terapia ($150) +35🧠</button>
+        <button onclick="vacation()"  class="px-3 py-1.5 rounded text-xs bg-cyan-800 hover:bg-cyan-700">Vacaciones ($600, 5d) +salud</button>
+      </div>
+      <div class="text-[11px] text-slate-500 mt-2">Trabajar: -50⚡ y -5🧠 por día, gana salario×8h. Si la salud mental cae a &lt;15% → Burnout (pierdes el empleo + gasto médico).</div>
+    </div>
+
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Carrera Profesional</h3>
+      <table class="w-full text-xs">
+        <thead><tr class="text-slate-500 text-left"><th>Puesto</th><th class="text-right">Salario</th><th class="text-right">Acción</th></tr></thead>
+        <tbody>${jobsHtml}</tbody>
+      </table>
+      <div class="text-[11px] text-slate-500 mt-2">Estudiar a tiempo completo (sin ingresos) durante X días desbloquea el siguiente puesto.</div>
+    </div>
+
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Costo de Vida (Vivienda)</h3>
+      <div class="grid grid-cols-3 gap-2">
+        ${HOUSING.map((h,i)=>`
+          <button onclick="setHousing(${i})" ${p.livingInProperty>=0?'disabled':''} class="mini rounded p-2 text-left ${p.housing===i&&p.livingInProperty<0?'glow':''} hover:bg-slate-800">
+            <div class="text-xs font-semibold text-slate-200">${h.name}</div>
+            <div class="text-xs text-slate-400 font-mono">${money(h.rent)}/mes</div>
+            <div class="text-[10px] text-slate-500">Confort ${'★'.repeat(h.comfort+1)}</div>
+          </button>`).join('')}
+      </div>
+      ${p.livingInProperty>=0?`<div class="text-[11px] text-emerald-400 mt-2">Habitas una propiedad de tu cartera: alquiler $0/mes.</div>`:`<div class="text-[11px] text-slate-500 mt-2">Se cobra cada 30 días. Si no hay liquidez, va a la tarjeta de crédito.</div>`}
+    </div>
+  </div>`;
+}
+
+/* ---- PESTAÑA B: BIENES RAÍCES ---- */
+function tabRealEstate(){
+  const market = REALTY.map((r,i)=>{
+    const dp = r.price*0.2;
+    return `<tr class="border-b border-slate-800">
+      <td class="py-2"><div class="text-slate-200">${r.name}</div><div class="text-[10px] text-slate-500">${r.type} · alquiler ref. ${money(r.rent)}/m</div></td>
+      <td class="text-right font-mono">${money(r.price)}</td>
+      <td class="text-right">
+        <button onclick="buyProperty(${i},false)" class="text-[11px] px-2 py-1 rounded bg-emerald-800 hover:bg-emerald-700 mb-1 w-full">Contado</button>
+        <button onclick="buyProperty(${i},true)" class="text-[11px] px-2 py-1 rounded bg-blue-800 hover:bg-blue-700 w-full">Hipoteca (pie ${money(dp)})</button>
+      </td></tr>`;
+  }).join('');
+
+  const owned = S.properties.length===0 ? `<div class="text-xs text-slate-500 p-2">No posees propiedades todavía.</div>` :
+    S.properties.map(p=>{
+      const mg = S.mortgages.find(m=>m.propId===p.id);
+      const living = S.player.livingInProperty===p.id;
+      return `<div class="mini rounded p-3 mb-2">
+        <div class="flex justify-between items-start">
+          <div>
+            <div class="text-slate-200 font-semibold">${p.name}</div>
+            <div class="text-[11px] text-slate-500">Valor ${money(p.price)} ${mg?`· Hipoteca ${money(mg.bal)} @ ${(mg.rate*100).toFixed(2)}%`:'· Sin deuda'}</div>
+          </div>
+          <div class="text-right text-[11px]">
+            <div class="${p.mode==='alquilar'?'text-emerald-400':'text-sky-400'}">${living?'🏡 Habitada':p.mode==='alquilar'?(p.vacant>0?'🏚️ Vacante':'💰 Alquilada'):'🔑 Vacía'}</div>
+            ${p.mode==='alquilar'?`<div class="text-slate-500">Renta ${money(p.rent)}/m · cobrado ${money(p.collected)}</div>`:''}
+          </div>
+        </div>
+        <div class="flex gap-1 mt-2 flex-wrap">
+          <button onclick="setPropMode('${p.id}','alquilar')" class="text-[11px] px-2 py-1 rounded ${p.mode==='alquilar'?'bg-emerald-700':'bg-slate-700 hover:bg-slate-600'}">Poner en alquiler</button>
+          ${p.livable?`<button onclick="liveIn('${p.id}')" class="text-[11px] px-2 py-1 rounded ${living?'bg-sky-700':'bg-slate-700 hover:bg-slate-600'}">Habitarla</button>`:''}
+          <button onclick="sellProperty('${p.id}')" class="text-[11px] px-2 py-1 rounded bg-rose-900 hover:bg-rose-800">Vender</button>
+        </div>
+      </div>`;
+    }).join('');
+
+  return `
+  <div class="space-y-3">
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Mercado Inmobiliario</h3>
+      <table class="w-full text-xs"><thead><tr class="text-slate-500 text-left"><th>Propiedad</th><th class="text-right">Precio</th><th class="text-right">Comprar</th></tr></thead>
+      <tbody>${market}</tbody></table>
+      <div class="text-[11px] text-slate-500 mt-2">Hipoteca: 20% de pie, financiación a 360 cuotas a tasa BC +2%. Mantenimiento de alquiler ~1% anual + riesgo de vacancia.</div>
+    </div>
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Mi Cartera Inmobiliaria</h3>
+      ${owned}
+    </div>
+  </div>`;
+}
+
+/* ---- PESTAÑA C: BOLSA ---- */
+function spark(hist){
+  const w=120,h=28,min=Math.min(...hist),max=Math.max(...hist),rng=(max-min)||1;
+  const pts=hist.map((v,i)=>`${(i/(hist.length-1)*w).toFixed(1)},${(h-(v-min)/rng*h).toFixed(1)}`).join(' ');
+  const up=hist[hist.length-1]>=hist[0];
+  return `<svg width="${w}" height="${h}" class="inline-block"><polyline points="${pts}" fill="none" stroke="${up?'#22c55e':'#ef4444'}" stroke-width="1.5"/></svg>`;
+}
+function tabBolsa(){
+  const rows = Object.values(S.stocks).map(st=>{
+    const h=S.holdings[st.sym];
+    const chg=(st.price/st.prev-1)*100;
+    const totShares=h.shares+h.mShares;
+    const posVal=totShares*st.price;
+    return `<div class="mini rounded p-3 mb-2">
+      <div class="flex justify-between items-center">
+        <div>
+          <div class="text-slate-100 font-semibold">${st.name} <span class="text-[10px] text-slate-500">${st.sym}</span></div>
+          <div class="text-[11px] text-slate-500">${stockTag(st)}</div>
+        </div>
+        <div class="text-right">
+          <div class="font-mono text-slate-100">${money2(st.price)}</div>
+          <div class="text-[11px] font-mono ${chg>=0?'pos':'neg'}">${pctf(chg)}</div>
+        </div>
+        <div class="ml-2">${spark(st.hist)}</div>
+      </div>
+      ${totShares>0?`<div class="text-[11px] text-slate-400 mt-1">Posición: ${totShares.toFixed(2)} ud · ${money(posVal)} ${h.mShares>0?`<span class="text-amber-400">(apalancado: ${h.mShares.toFixed(2)} ud, deuda ${money(h.mLoan)}, margin call &lt; ${money2(h.mEntry*0.75)})</span>`:''}</div>`:''}
+      <div class="flex gap-1 mt-2 items-center flex-wrap">
+        <input type="number" min="1" value="10" id="qty_${st.sym}" class="w-20 px-2 py-1 rounded text-xs">
+        <span class="text-[10px] text-slate-500">unidades</span>
+        <button onclick="buyStock('${st.sym}',false)" class="text-[11px] px-2 py-1 rounded bg-emerald-800 hover:bg-emerald-700">Comprar</button>
+        <button onclick="buyStock('${st.sym}',true)" class="text-[11px] px-2 py-1 rounded bg-amber-800 hover:bg-amber-700">Comprar x2 (Margin)</button>
+        <button onclick="sellStock('${st.sym}')" ${totShares<=0?'disabled':''} class="text-[11px] px-2 py-1 rounded bg-rose-900 hover:bg-rose-800">Vender todo</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="card rounded-lg p-3">
+    <div class="flex justify-between items-center mb-2"><h3 class="font-semibold text-white">Mercado de Capitales</h3>
+    <div class="text-[11px] text-slate-500">Valor cartera: <span class="font-mono text-slate-200">${money(stockValue())}</span></div></div>
+    ${rows}
+    <div class="text-[11px] text-slate-500">Margin x2: el banco presta igual a tu aporte. Si el activo cae 25% desde tu entrada → <span class="text-amber-400">Margin Call automático</span> y liquidación.</div>
+  </div>`;
+}
+function stockTag(st){
+  if(st.kind==='bond') return `Renta fija atada a tasa BC (${(S.macro.baseRate*100).toFixed(2)}%)`;
+  if(st.kind==='index') return 'Paseo aleatorio, deriva +8% anual';
+  if(st.kind==='blue') return 'Estable · dividendo 3% anual (pago diario)';
+  if(st.kind==='tech') return 'Alta volatilidad';
+  if(st.kind==='crypto') return `Especulación extrema · régimen: ${st.regime}`;
+  return '';
+}
+
+/* ---- PESTAÑA D: CORPORACIONES ---- */
+function tabEmpresas(){
+  const nw=netWorth();
+  const founders = CORP_TYPES.map(t=>{
+    const locked = t.id==='vc' && nw<1e6;
+    return `<div class="mini rounded p-3">
+      <div class="text-slate-100 font-semibold text-sm">${t.name}</div>
+      <div class="text-[11px] text-slate-500 mb-1">${t.desc}</div>
+      <div class="flex justify-between items-center">
+        <span class="text-xs font-mono text-amber-400">Capital: ${money(t.cap)}</span>
+        ${locked?`<span class="text-[11px] text-slate-600">🔒 Requiere PN &gt; $1M</span>`:`<button onclick="foundCorp('${t.id}')" class="text-[11px] px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600">Fundar</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  const mine = S.corps.length===0 ? '' : S.corps.map((c,idx)=>{
+    const T=CORP_TYPES.find(t=>t.id===c.type);
+    if(c.closed) return `<div class="mini rounded p-3 mb-2 opacity-50"><div class="text-rose-400 font-semibold">${c.name} — ☠️ CERRADA</div></div>`;
+    const val=corpValuation(c), ebitda=corpEBITDA(c);
+    const ipoDone=c.ipo;
+    return `<div class="mini rounded p-3 mb-2">
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="text-slate-100 font-semibold">${c.name} <span class="text-[10px] text-slate-500">${T.name}</span></div>
+          <div class="text-[11px] text-slate-500">Caja empresa: <span class="${c.cash<0?'neg':'text-slate-300'} font-mono">${money(c.cash)}</span> · Valuación: <span class="font-mono text-amber-400">${money(val)}</span></div>
+          <div class="text-[11px] text-slate-500">EBITDA anualiz.: <span class="${ebitda<0?'neg':'pos'} font-mono">${money(ebitda)}</span> · Hoy: ingreso ${money(c.revToday||0)} / beneficio <span class="${(c.profitToday||0)<0?'neg':'pos'}">${money(c.profitToday||0)}</span></div>
+        </div>
+        <div class="text-right text-[11px]">${c.ceo?'<span class="text-emerald-400">👔 CEO activo</span>':'<span class="text-amber-400">⚡ Tú la operas</span>'} ${ipoDone?'<div class="text-sky-400">📊 IPO (40% público)</div>':''}</div>
+      </div>
+
+      ${c.type!=='vc'?`
+      <div class="grid grid-cols-2 gap-2 mt-2 text-[11px]">
+        <div class="bg-black/30 rounded p-2">
+          <div class="flex justify-between items-center mb-1"><span class="text-slate-400">Precio: <b class="text-slate-100">${money2(c.price)}</b></span>
+            <div class="flex gap-1">
+              <button onclick="corpPrice(${idx},-1)" class="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600">−</button>
+              <button onclick="corpPrice(${idx},1)" class="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600">+</button>
+            </div>
+          </div>
+          <div class="text-slate-500">Calidad producto: ${Math.round(c.quality)}/100</div>
+          ${c.type==='saas'?`<div class="text-slate-500">Desarrollo I+D: ${Math.round(c.devProgress)}% ${c.devProgress<100?'<span class="text-amber-400">(en construcción)</span>':'<span class="text-emerald-400">(replicación $0)</span>'}</div>`:''}
+        </div>
+        <div class="bg-black/30 rounded p-2">
+          <div class="text-slate-400 mb-1">Plantilla</div>
+          <div class="flex justify-between"><span>Operarios: ${c.operarios}</span><span><button onclick="hire(${idx},'operarios',1)" class="px-1.5 rounded bg-slate-700 hover:bg-slate-600">+</button> <button onclick="hire(${idx},'operarios',-1)" class="px-1.5 rounded bg-slate-700 hover:bg-slate-600">−</button></span></div>
+          <div class="flex justify-between"><span>Vendedores: ${c.vendedores}</span><span><button onclick="hire(${idx},'vendedores',1)" class="px-1.5 rounded bg-slate-700 hover:bg-slate-600">+</button> <button onclick="hire(${idx},'vendedores',-1)" class="px-1.5 rounded bg-slate-700 hover:bg-slate-600">−</button></span></div>
+          <div class="flex justify-between mt-0.5"><span>CEO (C-Level)</span><button onclick="hireCEO(${idx})" class="px-1.5 py-0.5 rounded ${c.ceo?'bg-emerald-700':'bg-slate-700 hover:bg-slate-600'}">${c.ceo?'Despedir':'Contratar $300/d'}</button></div>
+        </div>
+      </div>
+      <div class="flex gap-1 mt-2 flex-wrap items-center">
+        <button onclick="investRD(${idx})" class="text-[11px] px-2 py-1 rounded bg-purple-800 hover:bg-purple-700">Invertir I+D ($2,000 → +calidad)</button>
+        <button onclick="rdToggle(${idx})" class="text-[11px] px-2 py-1 rounded ${c.rdSpend>0?'bg-purple-700':'bg-slate-700 hover:bg-slate-600'}">I+D continua ${c.rdSpend>0?'ON ($'+c.rdSpend+'/d)':'OFF'}</button>
+      </div>`:`
+      <div class="mt-2 text-[11px] text-slate-400">Capital colocado: <span class="font-mono text-slate-200">${money(c.capital)}</span>. Rinde sobre el ciclo de mercado y la tasa BC.</div>`}
+
+      <div class="flex gap-1 mt-2 flex-wrap border-t border-slate-800 pt-2">
+        <button onclick="withdrawCorp(${idx})" class="text-[11px] px-2 py-1 rounded bg-emerald-900 hover:bg-emerald-800">Retirar caja a tu liquidez</button>
+        <button onclick="sellCorp(${idx})" class="text-[11px] px-2 py-1 rounded bg-amber-900 hover:bg-amber-800">Vender empresa (EBITDA×8 = ${money(Math.max(0,ebitda*8))})</button>
+        ${!ipoDone?`<button onclick="ipoCorp(${idx})" class="text-[11px] px-2 py-1 rounded bg-sky-900 hover:bg-sky-800">Lanzar IPO (40% → ${money(val*0.4)} cash)</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="space-y-3">
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Fundar Nueva Empresa</h3>
+      <div class="grid grid-cols-2 gap-2">${founders}</div>
+    </div>
+    ${S.corps.length?`<div class="card rounded-lg p-3"><h3 class="font-semibold text-white mb-2">Mis Corporaciones</h3>${mine}</div>`:''}
+  </div>`;
+}
+
+/* ---- PESTAÑA: BANCO ---- */
+function tabBanco(){
+  const nw=netWorth();
+  const maxLoan=Math.max(0, nw*0.5);
+  const rate=loanRate();
+  const cc=S.debt.card, sl=S.debt.student;
+  return `<div class="space-y-3">
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Préstamos Comerciales</h3>
+      <div class="text-[11px] text-slate-400 mb-2">Monto máximo (Patrimonio Neto × 0.5): <span class="font-mono text-emerald-400">${money(maxLoan)}</span> · Tasa según score (${Math.round(S.player.creditScore)}): <span class="font-mono text-amber-400">${(rate*100).toFixed(2)}%</span></div>
+      <div class="flex gap-2 items-center flex-wrap">
+        <input type="number" min="100" value="${Math.round(Math.min(5000,maxLoan))}" id="loanAmt" class="w-32 px-2 py-1 rounded text-xs">
+        <button onclick="takeLoan()" ${maxLoan<100||S.player.creditScore<480?'disabled':''} class="text-xs px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-600">Solicitar préstamo</button>
+        ${S.player.creditScore<480?'<span class="text-[11px] text-rose-400">Score insuficiente para nuevo crédito.</span>':''}
+      </div>
+      ${S.loans.length?`<div class="mt-3 space-y-1">${S.loans.map((l,i)=>`<div class="flex justify-between items-center mini rounded p-2 text-xs">
+        <span>Préstamo #${i+1}: <span class="font-mono neg">${money(l.bal)}</span> @ ${(l.rate*100).toFixed(2)}%</span>
+        <button onclick="repayLoan(${i})" class="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700">Pagar</button></div>`).join('')}</div>`:''}
+    </div>
+
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Mis Deudas</h3>
+      <div class="space-y-2 text-xs">
+        <div class="flex justify-between items-center mini rounded p-2">
+          <span>💳 Tarjeta de Crédito (24% TNA): <span class="font-mono neg">${money(cc.bal)}</span></span>
+          <div><button onclick="payCard(500)" ${cc.bal<=0?'disabled':''} class="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700 mr-1">Pagar $500</button>
+          <button onclick="payCard(-1)" ${cc.bal<=0?'disabled':''} class="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700">Saldar todo</button></div>
+        </div>
+        <div class="flex justify-between items-center mini rounded p-2">
+          <span>🎓 Préstamo Universitario (6.5%): <span class="font-mono neg">${money(sl.bal)}</span></span>
+          <div><button onclick="payStudent(1000)" ${sl.bal<=0?'disabled':''} class="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700 mr-1">Pagar $1,000</button>
+          <button onclick="payStudent(-1)" ${sl.bal<=0?'disabled':''} class="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700">Saldar todo</button></div>
+        </div>
+      </div>
+      <div class="text-[11px] text-slate-500 mt-2">Pagar intereses a tiempo sube tu puntaje crediticio; el impago lo derrumba y restringe tu acceso a crédito.</div>
+    </div>
+
+    <div class="card rounded-lg p-3">
+      <h3 class="font-semibold text-white mb-2">Panorama Macroeconómico</h3>
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div class="mini rounded p-2"><div class="text-slate-500">Fase del ciclo</div><div class="text-slate-100 font-semibold">${S.macro.phase}</div></div>
+        <div class="mini rounded p-2"><div class="text-slate-500">Tasa Banco Central</div><div class="text-amber-400 font-mono">${(S.macro.baseRate*100).toFixed(2)}%</div></div>
+        <div class="mini rounded p-2"><div class="text-slate-500">Inflación anual</div><div class="text-rose-400 font-mono">${(S.macro.inflation*100).toFixed(2)}%</div></div>
+        <div class="mini rounded p-2"><div class="text-slate-500">Tasa hipotecaria</div><div class="text-slate-200 font-mono">${((S.macro.baseRate+0.02)*100).toFixed(2)}%</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ============================== ACCIONES ================================== */
+function flash(){ /* re-render inmediato tras acción */ renderLeft(); renderCenter(); }
+
+// EMPLEO
+function acceptJob(t){ if(S.player.unlocked.includes(t)){ S.player.jobTier=t; S.player.working=true; log(`✅ Aceptaste el empleo de <b>${JOBS[t].name}</b> (${money(JOBS[t].wage)}/h).`,'pos'); flash(); } }
+function study(t){ if(S.player.study) return; const need=JOBS[t].studyNeed; S.player.study={tier:t,need,done:0}; S.player.working=false; log(`🎓 Comienzas a estudiar para <b>${JOBS[t].name}</b> (${need} días, sin ingresos).`,'info'); flash(); }
+function setWork(v){ if(S.player.jobTier>0){ S.player.working=v; } else if(v){ log('No tienes empleo activo. Acepta uno primero.','warn'); } flash(); }
+function therapy(){ charge(150,'Terapia'); S.player.mental=clamp(S.player.mental+35,0,100); log('🧠 Sesión de terapia: +35% salud mental.','pos'); flash(); }
+function vacation(){ charge(600,'Vacaciones'); S.player.resting=true; S.player.restDays=5; S.player.working=false; log('🌴 Te tomas 5 días de vacaciones para recuperar la salud mental.','pos'); flash(); }
+function setHousing(i){ if(S.player.livingInProperty>=0) return; S.player.housing=i; log(`🏠 Te mudas a: ${HOUSING[i].name} (${money(HOUSING[i].rent)}/mes).`,'info'); flash(); }
+
+// BIENES RAÍCES
+let propSeq=0;
+function buyProperty(i, mortgage){
+  const r=REALTY[i];
+  const id='prop'+(propSeq++);
+  if(mortgage){
+    const dp=r.price*0.2;
+    if(S.player.cash<dp){ log(`No tienes el pie de ${money(dp)} para la hipoteca de ${r.name}.`,'warn'); return; }
+    if(S.player.creditScore<540){ log('Tu score crediticio es muy bajo: el banco rechaza la hipoteca.','neg'); return; }
+    S.player.cash-=dp;
+    const rate=S.macro.baseRate+0.02;
+    const principal=r.price-dp, n=360;
+    const mr=rate/12;
+    const monthly = principal*mr/(1-Math.pow(1+mr,-n));
+    S.mortgages.push({propId:id,bal:principal,rate,monthly,termLeft:n});
+    log(`🏦 Hipoteca aprobada para <b>${r.name}</b>: pie ${money(dp)}, cuota ${money(monthly)}/mes a ${(rate*100).toFixed(2)}%.`,'pos');
+  } else {
+    if(S.player.cash<r.price){ log(`Liquidez insuficiente para comprar ${r.name} al contado.`,'warn'); return; }
+    S.player.cash-=r.price;
+    log(`🏠 Compraste <b>${r.name}</b> al contado por ${money(r.price)}.`,'pos');
+  }
+  S.properties.push({id,name:r.name,price:r.price,rent:r.rent,livable:!!r.livable,mode:'alquilar',vacant:0,collected:0});
+  flash();
+}
+function setPropMode(id,mode){ const p=S.properties.find(x=>x.id===id); if(!p)return; if(S.player.livingInProperty===id){ S.player.livingInProperty=-1; } p.mode=mode; log(`🔑 ${p.name}: ahora en modo ${mode==='alquilar'?'ALQUILER':mode}.`,'info'); flash(); }
+function liveIn(id){ const p=S.properties.find(x=>x.id===id); if(!p||!p.livable)return; S.player.livingInProperty=id; p.mode='habitar'; log(`🏡 Te mudas a tu propiedad <b>${p.name}</b>. Dejas de pagar alquiler.`,'pos'); flash(); }
+function sellProperty(id){
+  const idx=S.properties.findIndex(x=>x.id===id); if(idx<0)return;
+  const p=S.properties[idx];
+  const mg=S.mortgages.find(m=>m.propId===id);
+  const sale=p.price*rnd(0.96,1.08);
+  let net=sale;
+  if(mg){ net-=mg.bal; S.mortgages=S.mortgages.filter(m=>m.propId!==id); }
+  S.player.cash+=Math.max(0,net);
+  if(S.player.livingInProperty===id) S.player.livingInProperty=-1;
+  S.properties.splice(idx,1);
+  log(`💰 Vendiste <b>${p.name}</b> por ${money(sale)} (neto tras hipoteca: ${money(net)}).`,'pos');
+  flash();
+}
+
+// BOLSA
+function getQty(sym){ const el=$('qty_'+sym); let q=el?parseFloat(el.value):0; return (isNaN(q)||q<=0)?0:q; }
+function buyStock(sym, margin){
+  const q=getQty(sym); if(!q){ log('Cantidad inválida.','warn'); return; }
+  const st=S.stocks[sym], h=S.holdings[sym];
+  const cost=q*st.price;
+  if(margin){
+    // x2: el banco presta igual al aporte; compras 2× con tu cash como margen
+    const myCash=cost;            // tu aporte cubre q unidades
+    if(S.player.cash<myCash){ log(`Liquidez insuficiente para el margen (${money(myCash)}).`,'warn'); return; }
+    S.player.cash-=myCash;
+    const newShares=q; const loan=cost;   // banco presta otro tanto -> total 2q? Mantenemos: aporte q + préstamo q
+    // posición apalancada total = 2q unidades, deuda = cost
+    const totMShares=h.mShares+q*2;
+    h.mEntry = h.mShares>0 ? (h.mEntry*h.mShares + st.price*q*2)/totMShares : st.price;
+    h.mShares=totMShares; h.mLoan+=cost;
+    log(`📊 Compra <b>apalancada x2</b> de ${(q*2).toFixed(2)} ${sym} @ ${money2(st.price)}. Aporte ${money(myCash)}, préstamo ${money(cost)}. Margin call si baja a ${money2(h.mEntry*0.75)}.`,'warn');
+  } else {
+    if(S.player.cash<cost){ log(`Liquidez insuficiente (${money(cost)}).`,'warn'); return; }
+    S.player.cash-=cost;
+    const tot=h.shares+q;
+    h.avgCost=h.shares>0?(h.avgCost*h.shares+cost)/tot:st.price;
+    h.shares=tot;
+    log(`🟢 Compraste ${q.toFixed(2)} ${sym} por ${money(cost)} @ ${money2(st.price)}.`,'pos');
+  }
+  flash();
+}
+function sellStock(sym){
+  const st=S.stocks[sym], h=S.holdings[sym];
+  let proceeds=0, msg=[];
+  if(h.shares>0){ proceeds+=h.shares*st.price; msg.push(`${h.shares.toFixed(2)} ud al contado`); h.shares=0; h.avgCost=0; }
+  if(h.mShares>0){ const gross=h.mShares*st.price; const net=gross-h.mLoan; proceeds+=Math.max(0,net); msg.push(`${h.mShares.toFixed(2)} ud apalancadas (neto tras deuda ${money(net)})`); h.mShares=0; h.mLoan=0; h.mEntry=0; }
+  if(proceeds<=0 && msg.length===0){ return; }
+  S.player.cash+=proceeds;
+  log(`🔴 Vendiste ${sym}: ${msg.join(' + ')}. Recibes ${money(proceeds)}.`,'info');
+  flash();
+}
+
+// CORPORACIONES
+let corpSeq=0;
+function foundCorp(type){
+  const T=CORP_TYPES.find(t=>t.id===type);
+  if(type==='vc' && netWorth()<1e6){ log('Necesitas más de $1M de patrimonio neto para fundar un Fondo de Capital Riesgo.','warn'); return; }
+  if(S.player.cash<T.cap){ log(`Capital insuficiente: fundar ${T.name} requiere ${money(T.cap)}.`,'warn'); return; }
+  S.player.cash-=T.cap;
+  const names={kiosco:'Kiosco',mkt:'Agencia',saas:'SaaS',vc:'Fondo VC'};
+  const c={
+    id:'corp'+(corpSeq++), type, name:`${names[type]} #${corpSeq}`,
+    cash:T.cap*0.3, capital:T.cap, price:T.basePrice, quality:T.baseQ,
+    operarios:0, vendedores:0, ceo:false, rdSpend:0, devProgress:type==='saas'?0:100,
+    profitHist:[], demandMod:1, demandModDays:0, revToday:0, profitToday:0, lifetimeProfit:0, ipo:false, closed:false,
+  };
+  S.corps.push(c);
+  log(`🏢 Fundaste <b>${c.name}</b> (${T.name}) con ${money(T.cap)} de capital inicial.`,'pos');
+  flash();
+}
+function corpPrice(idx,dir){ const c=S.corps[idx]; const step=c.type==='kiosco'?0.5:c.type==='saas'?2:50; c.price=Math.max(c.type==='kiosco'?0.5:1,c.price+dir*step); flash(); }
+function hire(idx,role,d){ const c=S.corps[idx]; c[role]=Math.max(0,c[role]+d); flash(); }
+function hireCEO(idx){ const c=S.corps[idx]; c.ceo=!c.ceo; log(c.ceo?`👔 Contrataste un CEO para ${c.name} ($300/día). Opera sin gastar tu energía.`:`Despediste al CEO de ${c.name}. Ahora la operas tú.`, c.ceo?'pos':'info'); flash(); }
+function investRD(idx){ const c=S.corps[idx]; if(S.player.cash<2000){ log('Necesitas $2,000 para invertir en I+D.','warn'); return; } S.player.cash-=2000; c.quality=Math.min(100,c.quality+8); log(`🔬 Inversión I+D en ${c.name}: calidad +8 (ahora ${Math.round(c.quality)}).`,'pos'); flash(); }
+function rdToggle(idx){ const c=S.corps[idx]; c.rdSpend=c.rdSpend>0?0:200; log(`🔬 I+D continua ${c.rdSpend>0?'activada ($200/día)':'desactivada'} en ${c.name}.`,'info'); flash(); }
+function withdrawCorp(idx){ const c=S.corps[idx]; if(c.cash<=0){ log('La empresa no tiene caja para retirar.','warn'); return; } const amt=c.cash; S.player.cash+=amt; c.cash=0; log(`💵 Retiraste ${money(amt)} de la caja de ${c.name} a tu liquidez personal.`,'pos'); flash(); }
+function sellCorp(idx){ const c=S.corps[idx]; const price=Math.max(0,corpEBITDA(c)*8)+Math.max(0,c.cash); S.player.cash+=price; log(`🤝 Vendiste <b>${c.name}</b> al mercado por ${money(price)} (EBITDA×8 + caja).`,'pos'); S.corps.splice(idx,1); flash(); }
+function ipoCorp(idx){ const c=S.corps[idx]; if(c.ipo){ return; } const val=corpValuation(c); const cashOut=val*0.4; S.player.cash+=cashOut; c.ipo=true; c.publicShare=0.4; log(`📊 <b>IPO</b> de ${c.name}: colocas el 40% en bolsa y recibes ${money(cashOut)} de efectivo líquido instantáneo.`,'pos'); flash(); }
+
+// BANCO
+function loanRate(){ const s=S.player.creditScore; const spread = clamp((780-s)/100,0.01,5); return clamp(S.macro.baseRate + 0.03 + spread*0.03, 0.04, 0.32); }
+function takeLoan(){
+  const maxLoan=Math.max(0,netWorth()*0.5);
+  let amt=parseFloat($('loanAmt').value)||0;
+  if(amt<100){ log('Monto mínimo $100.','warn'); return; }
+  if(amt>maxLoan){ log(`El banco sólo aprueba hasta ${money(maxLoan)} (Patrimonio Neto × 0.5).`,'warn'); amt=maxLoan; }
+  if(S.player.creditScore<480){ log('Score crediticio insuficiente: préstamo rechazado.','neg'); return; }
+  const rate=loanRate();
+  S.loans.push({bal:amt,rate});
+  S.player.cash+=amt;
+  log(`🏦 Préstamo comercial aprobado: ${money(amt)} a ${(rate*100).toFixed(2)}% TNA.`,'pos');
+  flash();
+}
+function repayLoan(i){ const l=S.loans[i]; if(!l)return; const pay=Math.min(l.bal,S.player.cash); if(pay<=0){ log('Sin liquidez para pagar.','warn'); return; } S.player.cash-=pay; l.bal-=pay; if(l.bal<=1){ S.loans.splice(i,1); log('✅ Préstamo comercial cancelado por completo.','pos'); } else log(`Pagaste ${money(pay)} del préstamo. Saldo: ${money(l.bal)}.`,'info'); flash(); }
+function payCard(amt){ const cc=S.debt.card; const pay=amt<0?cc.bal:Math.min(amt,cc.bal); const real=Math.min(pay,S.player.cash); if(real<=0){ log('Sin liquidez para pagar la tarjeta.','warn'); return; } S.player.cash-=real; cc.bal-=real; S.player.creditScore=clamp(S.player.creditScore+0.3,300,850); log(`💳 Pago a tarjeta: ${money(real)}. Saldo: ${money(cc.bal)}.`,'pos'); flash(); }
+function payStudent(amt){ const sl=S.debt.student; const pay=amt<0?sl.bal:Math.min(amt,sl.bal); const real=Math.min(pay,S.player.cash); if(real<=0){ log('Sin liquidez para pagar.','warn'); return; } S.player.cash-=real; sl.bal-=real; S.player.creditScore=clamp(S.player.creditScore+0.4,300,850); log(`🎓 Pago a préstamo universitario: ${money(real)}. Saldo: ${money(sl.bal)}.`,'pos'); if(sl.bal<=0) log('🎉 ¡Préstamo universitario saldado por completo!','pos'); flash(); }
+
+/* ============================== VELOCIDAD ================================ */
+const SPEEDS = { 0:0, 1:1000, 2:500, 5:200, 10:100 };
+function setSpeed(s){
+  S.speed=s;
+  if(S.timer){ clearInterval(S.timer); S.timer=null; }
+  if(s>0) S.timer=setInterval(tick, SPEEDS[s]);
+  document.querySelectorAll('.spd').forEach(b=>{ b.classList.toggle('active',+b.dataset.spd===s); if(+b.dataset.spd===s){ b.classList.add('bg-blue-700','text-white'); } else b.classList.remove('bg-blue-700','text-white'); });
+}
+
+/* ============================== INIT ===================================== */
+function init(){
+  initStocks();
+  // listeners de pestañas
+  document.querySelectorAll('.tabbtn').forEach(b=>b.addEventListener('click',()=>{
+    S.tab=b.dataset.tab;
+    document.querySelectorAll('.tabbtn').forEach(x=>x.classList.toggle('active',x===b));
+    renderCenter();
+  }));
+  document.querySelectorAll('.spd').forEach(b=>b.addEventListener('click',()=>setSpeed(+b.dataset.spd)));
+
+  log('🟢 <b>CAPITAL HOLDINGS</b> iniciado. Empiezas con $500, score 600, empleo de Operario ($12/h) y una deuda universitaria de $12,000 al 6.5%.','info');
+  log('🎯 Objetivo: amasar patrimonio neto hasta convertirte en un holding multimillonario. Pulsa una velocidad para comenzar el tiempo.','info');
+  log('💡 Consejo: paga los intereses a tiempo para subir tu score, estudia para escalar de empleo e invierte el excedente.','info');
+
+  S.player.working=true; // por defecto trabajando como operario
+  render();
+  setSpeed(0);
+}
+window.addEventListener('DOMContentLoaded', init);
+
+/* exponer funciones usadas por onclick inline */
+Object.assign(window,{acceptJob,study,setWork,therapy,vacation,setHousing,buyProperty,setPropMode,liveIn,sellProperty,buyStock,sellStock,foundCorp,corpPrice,hire,hireCEO,investRD,rdToggle,withdrawCorp,sellCorp,ipoCorp,takeLoan,repayLoan,payCard,payStudent});
+</script>
+</body>
+</html>
