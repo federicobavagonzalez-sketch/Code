@@ -331,6 +331,12 @@
     const v = Math.max(assets, earn * mult + assets + brandVal);
     return Math.max(0, fin(v, 0));
   }
+  // tasa de un bono corporativo: mejor para empresas grandes y rentables; piso 5% (> yield dividendos 4.5%)
+  function bondRateFor(state, co) {
+    const ey = avgAnnualProfit(co) / Math.max(companyValue(state, co), 1);
+    const health = clamp(ey / 0.15, 0, 1);
+    return Math.max(0.05, state.macro.interestRate + 0.015 + (1 - health) * 0.04);
+  }
   function competitorValue(state, c) {
     const p = state.products[c.productId];
     const macroMult = 1 + 0.5 * state.macro.cyclePhase;
@@ -431,11 +437,19 @@
     const eff = C.MKT_MAX * spend / (spend + C.MKT_HALFSAT);
     return 1 + eff * (1 + (bonus || 0));
   }
+  // alcance de mercado: la región sede + tiendas en otras regiones (rendimientos decrecientes, capeado 2.4×)
+  function reachMod(state, co, industry) {
+    let mult = 1;
+    if (co.outlets) for (let i = 0; i < co.outlets.length; i++) mult += 0.18 * regionMod(state, co.outlets[i], industry);
+    mult = clamp(mult, 1, 2.4);
+    return regionMod(state, co.region, industry) * mult;
+  }
   function sellerAttr(state, s) {
     const qFactor = 1 + 0.15 * s.qualityLevel * s.fresh;
     const bFactor = 0.3 + s.brandStrength;
     const mFactor = mktMultiplier(s.marketingBudget, s.isPlayer ? state.tech.mktBonus : 0);
-    const rMod = regionMod(state, s.region, state.products[s.productId].industry);
+    const industry = state.products[s.productId].industry;
+    const rMod = (s.isPlayer && s.ref && s.ref.outlets && s.ref.outlets.length) ? reachMod(state, s.ref, industry) : regionMod(state, s.region, industry);
     const price = Math.max(s.price, 0.01);
     let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * rMod / Math.pow(price, C.ATTR_B);
     // precio de reserva: la demanda colapsa cuando el precio supera ~2× la referencia
@@ -558,8 +572,11 @@
       if (e.morale < 0.4) e.avgSkill = clamp(e.avgSkill - 0.003, 0.1, 1); // rotación
       const marketing = co.marketingBudget;
       const rnd = co.rndBudget;
+      // alquiler de tiendas retail en otras regiones (escala con el tamaño del mercado local)
+      let outletRent = 0;
+      if (co.outlets) for (const rid of co.outlets) { const rr = state.regions.find(r => r.id === rid); if (rr) outletRent += rr.population / 1e6 * 1500 * m.inflationIndex; }
       const revenue = co._revenueThisTick || 0;
-      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd;
+      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd - outletRent;
       co.cashContribution = fin(contribution, 0);
       state.player.cash += co.cashContribution;
       state._quarterProfit += co.cashContribution;
@@ -916,7 +933,7 @@
           marketingBudget: 0, rndBudget: 0, brandStrength: 0.08, fresh: 1, vertical: !!A.vertical,
           employees: { count: Math.max(3, Math.round(cap / C.STAFF_PER_CAP)), avgSkill: 0.5, avgWage: C.BASE_WAGE * region.wageLevel, morale: 0.7 },
           cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: 0, profitHistory: [], lastUnitCost: 0,
-          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 0, shareHistory: [],
+          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 0, shareHistory: [], outlets: [],
         };
         state.companies.push(co);
         pushLog(state, 'Fundaste ' + co.name + ' en ' + region.name + ' (costo USD ' + Math.round(setupCost).toLocaleString('en') + ').', 'good');
@@ -991,6 +1008,40 @@
       case 'setVertical': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
         co.vertical = !!A.on; return { ok: true };
+      }
+      case 'issueBond': {
+        const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
+        const amt = fin(A.amount, 0); if (amt <= 0) return bad('Monto inválido');
+        const val = companyValue(state, co);
+        const existing = pl.loans.filter(l => l.type === 'bond' && l.companyId === co.id).reduce((s, l) => s + l.balance, 0);
+        const cap = val * 0.6 - existing;
+        if (amt > cap) return bad('Excede la capacidad de bonos de la empresa (disponible USD ' + Math.round(Math.max(0, cap)).toLocaleString('en') + ').');
+        const rate = bondRateFor(state, co);
+        const loan = makeLoan(state, amt, 'bond', 156, rate);
+        loan.companyId = co.id;
+        pl.loans.push(loan); pl.cash += amt; pl.inquiries.push(state.tick);
+        pushLog(state, co.name + ' emitió bonos por USD ' + Math.round(amt).toLocaleString('en') + ' a ' + (rate * 100).toFixed(1) + '% anual.', 'info');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
+      case 'openOutlet': {
+        const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
+        const r = state.regions.find(x => x.id === A.region); if (!r) return bad('Región inválida');
+        if (r.id === co.region) return bad('Ya vendés en tu región sede.');
+        if (!co.outlets) co.outlets = [];
+        if (co.outlets.indexOf(r.id) >= 0) return bad('Ya tenés una tienda ahí.');
+        const openCost = r.population / 1e6 * 1500 * 52 * state.macro.inflationIndex; // ≈ un año de alquiler
+        if (pl.cash < openCost) return bad('Apertura USD ' + Math.round(openCost).toLocaleString('en'));
+        pl.cash -= openCost; co.outlets.push(r.id);
+        pushLog(state, 'Abriste tienda de ' + co.name + ' en ' + r.name + ' (alcance de mercado +).', 'good');
+        awardMilestone(state, 'firstOutlet', 'Primera tienda en otra región.');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
+      case 'closeOutlet': {
+        const co = findCo(state, A.companyId); if (!co || !co.outlets) return bad('Empresa no encontrada');
+        co.outlets = co.outlets.filter(x => x !== A.region);
+        return { ok: true };
       }
       case 'mergeCompanies': {
         const a = findCo(state, A.intoId), b = findCo(state, A.fromId);
@@ -1252,7 +1303,7 @@
       marketingBudget: c.marketingBudget, rndBudget: c.rndBudget, brandStrength: c.brandStrength, fresh: c.fresh, vertical: false,
       employees: { count: Math.max(3, Math.round(c.capacity / C.STAFF_PER_CAP)), avgSkill: 0.55, avgWage: C.BASE_WAGE, morale: 0.55 },
       cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: c.marketShare, profitHistory: [], lastUnitCost: 0,
-      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6, shareHistory: [],
+      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6, shareHistory: [], outlets: [],
     };
     state.companies.push(co);
     c.dead = true;
@@ -1501,6 +1552,16 @@
   function previewMarketing(state, id, spend) { return previewWith(state, id, { marketing: spend }); }
   function previewQuality(state, id, level) { return previewWith(state, id, { qualityLevel: level }); }
 
+  // salud financiera de un competidor (para el panel de competencia)
+  function competitorHealth(state, c) {
+    const fc = c.fixedCost * state.macro.inflationIndex;
+    const buffer = c.cash / Math.max(fc * 40, 1);
+    if (c.dead) return { score: 0, label: 'quebrada', atRisk: false };
+    if (c.cash < -fc * 18 || c.annualEarnings < 0) return { score: clamp(0.2 + 0.3 * buffer, 0, 0.45), label: 'en riesgo', atRisk: true };
+    if (c.annualEarnings > 0 && c.cash > fc * 10) return { score: clamp(0.7 + 0.3 * buffer, 0.6, 1), label: 'sólida', atRisk: false };
+    return { score: 0.55, label: 'estable', atRisk: false };
+  }
+
   // util para UI: lista de tickers de acciones vivas
   function listStocks(state) {
     const out = [];
@@ -1513,5 +1574,6 @@
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
     PLAYABLE, buildProducts, previewPrice, previewMarketing, previewQuality, insuranceCostFor, regionDistance,
+    bondRateFor, competitorHealth,
   };
 });

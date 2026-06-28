@@ -491,6 +491,12 @@ textarea{width:100%;resize:vertical}
     const v = Math.max(assets, earn * mult + assets + brandVal);
     return Math.max(0, fin(v, 0));
   }
+  // tasa de un bono corporativo: mejor para empresas grandes y rentables; piso 5% (> yield dividendos 4.5%)
+  function bondRateFor(state, co) {
+    const ey = avgAnnualProfit(co) / Math.max(companyValue(state, co), 1);
+    const health = clamp(ey / 0.15, 0, 1);
+    return Math.max(0.05, state.macro.interestRate + 0.015 + (1 - health) * 0.04);
+  }
   function competitorValue(state, c) {
     const p = state.products[c.productId];
     const macroMult = 1 + 0.5 * state.macro.cyclePhase;
@@ -591,11 +597,19 @@ textarea{width:100%;resize:vertical}
     const eff = C.MKT_MAX * spend / (spend + C.MKT_HALFSAT);
     return 1 + eff * (1 + (bonus || 0));
   }
+  // alcance de mercado: la región sede + tiendas en otras regiones (rendimientos decrecientes, capeado 2.4×)
+  function reachMod(state, co, industry) {
+    let mult = 1;
+    if (co.outlets) for (let i = 0; i < co.outlets.length; i++) mult += 0.18 * regionMod(state, co.outlets[i], industry);
+    mult = clamp(mult, 1, 2.4);
+    return regionMod(state, co.region, industry) * mult;
+  }
   function sellerAttr(state, s) {
     const qFactor = 1 + 0.15 * s.qualityLevel * s.fresh;
     const bFactor = 0.3 + s.brandStrength;
     const mFactor = mktMultiplier(s.marketingBudget, s.isPlayer ? state.tech.mktBonus : 0);
-    const rMod = regionMod(state, s.region, state.products[s.productId].industry);
+    const industry = state.products[s.productId].industry;
+    const rMod = (s.isPlayer && s.ref && s.ref.outlets && s.ref.outlets.length) ? reachMod(state, s.ref, industry) : regionMod(state, s.region, industry);
     const price = Math.max(s.price, 0.01);
     let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * rMod / Math.pow(price, C.ATTR_B);
     // precio de reserva: la demanda colapsa cuando el precio supera ~2× la referencia
@@ -718,8 +732,11 @@ textarea{width:100%;resize:vertical}
       if (e.morale < 0.4) e.avgSkill = clamp(e.avgSkill - 0.003, 0.1, 1); // rotación
       const marketing = co.marketingBudget;
       const rnd = co.rndBudget;
+      // alquiler de tiendas retail en otras regiones (escala con el tamaño del mercado local)
+      let outletRent = 0;
+      if (co.outlets) for (const rid of co.outlets) { const rr = state.regions.find(r => r.id === rid); if (rr) outletRent += rr.population / 1e6 * 1500 * m.inflationIndex; }
       const revenue = co._revenueThisTick || 0;
-      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd;
+      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd - outletRent;
       co.cashContribution = fin(contribution, 0);
       state.player.cash += co.cashContribution;
       state._quarterProfit += co.cashContribution;
@@ -1076,7 +1093,7 @@ textarea{width:100%;resize:vertical}
           marketingBudget: 0, rndBudget: 0, brandStrength: 0.08, fresh: 1, vertical: !!A.vertical,
           employees: { count: Math.max(3, Math.round(cap / C.STAFF_PER_CAP)), avgSkill: 0.5, avgWage: C.BASE_WAGE * region.wageLevel, morale: 0.7 },
           cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: 0, profitHistory: [], lastUnitCost: 0,
-          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 0, shareHistory: [],
+          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 0, shareHistory: [], outlets: [],
         };
         state.companies.push(co);
         pushLog(state, 'Fundaste ' + co.name + ' en ' + region.name + ' (costo USD ' + Math.round(setupCost).toLocaleString('en') + ').', 'good');
@@ -1151,6 +1168,40 @@ textarea{width:100%;resize:vertical}
       case 'setVertical': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
         co.vertical = !!A.on; return { ok: true };
+      }
+      case 'issueBond': {
+        const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
+        const amt = fin(A.amount, 0); if (amt <= 0) return bad('Monto inválido');
+        const val = companyValue(state, co);
+        const existing = pl.loans.filter(l => l.type === 'bond' && l.companyId === co.id).reduce((s, l) => s + l.balance, 0);
+        const cap = val * 0.6 - existing;
+        if (amt > cap) return bad('Excede la capacidad de bonos de la empresa (disponible USD ' + Math.round(Math.max(0, cap)).toLocaleString('en') + ').');
+        const rate = bondRateFor(state, co);
+        const loan = makeLoan(state, amt, 'bond', 156, rate);
+        loan.companyId = co.id;
+        pl.loans.push(loan); pl.cash += amt; pl.inquiries.push(state.tick);
+        pushLog(state, co.name + ' emitió bonos por USD ' + Math.round(amt).toLocaleString('en') + ' a ' + (rate * 100).toFixed(1) + '% anual.', 'info');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
+      case 'openOutlet': {
+        const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
+        const r = state.regions.find(x => x.id === A.region); if (!r) return bad('Región inválida');
+        if (r.id === co.region) return bad('Ya vendés en tu región sede.');
+        if (!co.outlets) co.outlets = [];
+        if (co.outlets.indexOf(r.id) >= 0) return bad('Ya tenés una tienda ahí.');
+        const openCost = r.population / 1e6 * 1500 * 52 * state.macro.inflationIndex; // ≈ un año de alquiler
+        if (pl.cash < openCost) return bad('Apertura USD ' + Math.round(openCost).toLocaleString('en'));
+        pl.cash -= openCost; co.outlets.push(r.id);
+        pushLog(state, 'Abriste tienda de ' + co.name + ' en ' + r.name + ' (alcance de mercado +).', 'good');
+        awardMilestone(state, 'firstOutlet', 'Primera tienda en otra región.');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
+      case 'closeOutlet': {
+        const co = findCo(state, A.companyId); if (!co || !co.outlets) return bad('Empresa no encontrada');
+        co.outlets = co.outlets.filter(x => x !== A.region);
+        return { ok: true };
       }
       case 'mergeCompanies': {
         const a = findCo(state, A.intoId), b = findCo(state, A.fromId);
@@ -1412,7 +1463,7 @@ textarea{width:100%;resize:vertical}
       marketingBudget: c.marketingBudget, rndBudget: c.rndBudget, brandStrength: c.brandStrength, fresh: c.fresh, vertical: false,
       employees: { count: Math.max(3, Math.round(c.capacity / C.STAFF_PER_CAP)), avgSkill: 0.55, avgWage: C.BASE_WAGE, morale: 0.55 },
       cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: c.marketShare, profitHistory: [], lastUnitCost: 0,
-      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6, shareHistory: [],
+      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6, shareHistory: [], outlets: [],
     };
     state.companies.push(co);
     c.dead = true;
@@ -1661,6 +1712,16 @@ textarea{width:100%;resize:vertical}
   function previewMarketing(state, id, spend) { return previewWith(state, id, { marketing: spend }); }
   function previewQuality(state, id, level) { return previewWith(state, id, { qualityLevel: level }); }
 
+  // salud financiera de un competidor (para el panel de competencia)
+  function competitorHealth(state, c) {
+    const fc = c.fixedCost * state.macro.inflationIndex;
+    const buffer = c.cash / Math.max(fc * 40, 1);
+    if (c.dead) return { score: 0, label: 'quebrada', atRisk: false };
+    if (c.cash < -fc * 18 || c.annualEarnings < 0) return { score: clamp(0.2 + 0.3 * buffer, 0, 0.45), label: 'en riesgo', atRisk: true };
+    if (c.annualEarnings > 0 && c.cash > fc * 10) return { score: clamp(0.7 + 0.3 * buffer, 0.6, 1), label: 'sólida', atRisk: false };
+    return { score: 0.55, label: 'estable', atRisk: false };
+  }
+
   // util para UI: lista de tickers de acciones vivas
   function listStocks(state) {
     const out = [];
@@ -1673,6 +1734,7 @@ textarea{width:100%;resize:vertical}
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
     PLAYABLE, buildProducts, previewPrice, previewMarketing, previewQuality, insuranceCostFor, regionDistance,
+    bondRateFor, competitorHealth,
   };
 });
 </script>
@@ -1970,12 +2032,25 @@ textarea{width:100%;resize:vertical}
         '<button class="btn ghost" onclick="MG.train(\'' + co.id + '\')">Capacitar</button>' +
       '</div></div>';
 
-    // integración + corporativo
+    // red de tiendas (alcance de mercado en otras regiones)
+    var outRegions = (co.outlets || []).map(function (rid) { return S.regions.find(function (x) { return x.id === rid; }); }).filter(Boolean);
+    var avail = S.regions.filter(function (r) { return r.id !== co.region && (co.outlets || []).indexOf(r.id) < 0; });
+    h += '<div class="card"><div class="ttl">Red de tiendas (alcance)</div>' +
+      '<div class="sm muted">Vendés en <b>' + esc(hr ? hr.name : co.region) + '</b> + tus tiendas. Más tiendas = más alcance (capeado), con alquiler semanal.</div>' +
+      (outRegions.length ? outRegions.map(function (r) { return '<div class="srow sm"><span>🏬 ' + esc(r.name) + '</span><span class="muted">alquiler ' + fmtUSD(r.population / 1e6 * 1500 * S.macro.inflationIndex) + '/sem</span><button class="btn ghost" style="padding:4px 8px;min-height:0" onclick="MG.closeOutlet(\'' + co.id + '\',\'' + r.id + '\')">Cerrar</button></div>'; }).join('') : '<div class="sm muted">Sin tiendas fuera de la sede.</div>') +
+      (avail.length ? '<div class="row"><select id="i_outreg" onchange="MG.outletPrev(\'' + co.id + '\')">' + avail.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' — pob ' + (r.population / 1e6).toFixed(1) + 'M, riqueza ' + r.wealthIndex.toFixed(2) + '</option>'; }).join('') + '</select></div>' +
+        '<button class="btn ghost" id="outBtn" onclick="MG.openOutlet(\'' + co.id + '\')">Abrir tienda (' + fmtUSD(avail[0].population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')</button>' : '') + '</div>';
+
+    // integración + corporativo + financiamiento
     var mergeable = S.companies.filter(function (c) { return c.id !== co.id && c.productId === co.productId && !c.public; });
+    var coVal = E.companyValue(S, co);
+    var bondExisting = S.player.loans.filter(function (l) { return l.type === 'bond' && l.companyId === co.id; }).reduce(function (s, l) { return s + l.balance; }, 0);
+    var bondCap = Math.max(0, coVal * 0.6 - bondExisting);
     h += '<div class="card"><div class="ttl">Estrategia corporativa</div>' +
       '<label class="chk"><input type="checkbox" ' + (co.vertical ? 'checked' : '') + ' onclick="MG.vert(\'' + co.id + '\',this.checked)"> Integración vertical (produce insumos −30% costo)</label>' +
       (co.public ? '<div class="sm good">Cotiza en bolsa (' + co.ticker + '), float ' + pct(co.floatPct) + '</div>'
         : '<button class="btn ghost" onclick="MG.openIpo(\'' + co.id + '\')">Salir a bolsa (IPO)</button>') +
+      '<button class="btn ghost" onclick="MG.openBond(\'' + co.id + '\')">Emitir bono corporativo (cap. ' + fmtUSD(bondCap) + ' @ ' + (E.bondRateFor(S, co) * 100).toFixed(1) + '%)</button>' +
       (!co.public && mergeable.length ? '<button class="btn ghost" onclick="MG.openMerge(\'' + co.id + '\')">Fusionar otra empresa de ' + esc(p.name) + ' acá</button>' : '') +
       '<button class="btn danger ghost" onclick="MG.sellco(\'' + co.id + '\')">Vender empresa</button></div>';
     return h;
@@ -2010,8 +2085,17 @@ textarea{width:100%;resize:vertical}
         }).join('') +
         (youHere ? '<div class="sm muted" style="margin-top:6px">Tu cuota de mercado en el tiempo</div><canvas id="sc_' + pid + '" width="480" height="56"></canvas>' : '') + '</div>';
     });
+    // salud financiera de competidores
+    var alive = S.competitors.filter(function (c) { return !c.dead; }).map(function (c) { return { c: c, h: E.competitorHealth(S, c) }; }).sort(function (a, b) { return a.h.score - b.h.score; });
+    h += '<div class="card"><div class="ttl">Salud de competidores</div><div class="sm muted">Quién pierde plata y podría quebrar (liberando su cuota). Ordenado por riesgo.</div>' +
+      alive.slice(0, 12).map(function (x) {
+        var col = x.h.score < 0.45 ? 'bad' : x.h.score < 0.6 ? 'warn' : 'good';
+        return '<div class="srow sm"><span class="' + col + '">●</span><span>' + esc(x.c.name) + '</span><span class="chip">' + esc(S.products[x.c.productId].name) + '</span>' +
+          '<span class="bar mini-bar"><div style="width:' + (x.h.score * 100).toFixed(0) + '%"></div></span><span class="' + col + ' sm">' + x.h.label + '</span></div>';
+      }).join('') + '</div>';
+
     // M&A
-    h += '<div class="card"><div class="ttl">Adquisiciones (M&A)</div><div class="sm muted">Comprá competidores: valor + prima de control ' + pct(E.C.CONTROL_PREMIUM) + '.</div></div>';
+    h += '<div class="card"><div class="ttl">Adquisiciones (M&A)</div><div class="sm muted">Comprá competidores: valor + prima de control ' + pct(E.C.CONTROL_PREMIUM) + '. Los "en riesgo" suelen salir más baratos.</div></div>';
     var comps = S.competitors.filter(function (c) { return !c.dead; }).map(function (c) { return { c: c, v: E.competitorValue(S, c) }; }).sort(function (a, b) { return a.v - b.v; });
     h += comps.slice(0, 14).map(function (x) {
       var cost = x.v * (1 + E.C.CONTROL_PREMIUM);
@@ -2055,7 +2139,8 @@ textarea{width:100%;resize:vertical}
     h += '<div class="card"><div class="ttl">Préstamos activos</div>';
     if (!p.loans.length) h += '<div class="muted sm">Sin deudas. ¡Bien!</div>';
     else h += p.loans.map(function (l) {
-      var name = ({ student: 'Deuda estudiantil', business: 'Empresarial', personal: 'Personal', mortgage: 'Hipoteca', lineOfCredit: 'Línea de crédito' })[l.type] || l.type;
+      var name = ({ student: 'Deuda estudiantil', business: 'Empresarial', personal: 'Personal', mortgage: 'Hipoteca', lineOfCredit: 'Línea de crédito', bond: 'Bono corporativo' })[l.type] || l.type;
+      if (l.type === 'bond' && l.companyId) { var bc = S.companies.find(function (c) { return c.id === l.companyId; }); if (bc) name += ' · ' + esc(bc.name); }
       return '<div class="lrow"><div class="row"><b>' + name + '</b><span class="' + (l.missed ? 'bad' : 'muted') + ' sm">' + (l.missed ? l.missed + ' atrasos' : 'al día') + '</span></div>' +
         '<div class="grid3 sm">' + mini('Saldo', fmtUSD(l.balance)) + mini('Tasa', (l.annualRate * 100).toFixed(1) + '%') + mini('Cuota/sem', fmtFull(l.paymentPerTick)) + '</div>' +
         '<div class="row3"><button class="btn ghost" onclick="MG.payLoan(\'' + l.id + '\',5000)">Pagar +$5K</button>' +
@@ -2219,6 +2304,20 @@ textarea{width:100%;resize:vertical}
   }
   function doMerge(id) { var r = act({ type: 'mergeCompanies', intoId: id, fromId: el('merge_from').value }); if (r.ok) { closeModal(); toast('Empresas fusionadas.'); } }
 
+  // emisión de bono corporativo
+  function openBond(id) {
+    var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return;
+    var val = E.companyValue(S, co);
+    var existing = S.player.loans.filter(function (l) { return l.type === 'bond' && l.companyId === id; }).reduce(function (s, l) { return s + l.balance; }, 0);
+    var cap = Math.max(0, val * 0.6 - existing), rate = E.bondRateFor(S, co);
+    if (cap < 1000) { toast('Capacidad de bonos casi nula (la empresa debe valer más).'); return; }
+    modal('Emitir bono corporativo — ' + esc(co.name),
+      '<div class="sm muted">Deuda garantizada por la empresa (no usa tu límite de crédito personal). Capacidad: <b>' + fmtUSD(cap) + '</b> · tasa <b>' + (rate * 100).toFixed(1) + '%</b> anual · plazo 3 años. Las empresas grandes y rentables consiguen tasas más bajas.</div>' +
+      '<div class="row"><span class="lbl">Monto</span><input type="number" id="bond_amt" value="' + Math.round(cap * 0.5) + '"></div>',
+      'Emitir', 'MG.doBond(\'' + id + '\')');
+  }
+  function doBond(id) { var r = act({ type: 'issueBond', companyId: id, amount: num('bond_amt') }); if (r.ok) { closeModal(); toast('Bono emitido.'); } }
+
   // refinanciación con previsualización de la nueva tasa
   function refiPreview(id) {
     var l = S.player.loans.find(function (x) { return x.id === id; }); if (!l) return;
@@ -2316,6 +2415,10 @@ textarea{width:100%;resize:vertical}
     vert: function (id, on) { act({ type: 'setVertical', companyId: id, on: on }); },
     openIpo: openIpo, ipoPrev: ipoPrev, doIpo: doIpo,
     openMerge: openMerge, doMerge: doMerge,
+    openBond: openBond, doBond: doBond,
+    openOutlet: function (id) { act({ type: 'openOutlet', companyId: id, region: (el('i_outreg') || {}).value }); },
+    closeOutlet: function (id, rid) { act({ type: 'closeOutlet', companyId: id, region: rid }); },
+    outletPrev: function (id) { var r = S.regions.find(function (x) { return x.id === (el('i_outreg') || {}).value; }); var b = el('outBtn'); if (b && r) b.textContent = 'Abrir tienda (' + fmtUSD(r.population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')'; },
     sellco: function (id) { if (confirm('¿Vender esta empresa?')) { act({ type: 'sellCompany', companyId: id }); coView = null; render(); } },
     acquire: function (id) { act({ type: 'acquire', competitorId: id }); },
     takeLoan: function () { act({ type: 'takeLoan', amount: num('i_loan'), loanType: el('i_ltype').value, termTicks: parseInt(el('i_lterm').value, 10) }); },

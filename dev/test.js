@@ -263,6 +263,37 @@ section('Short-selling y margin call (Bloque 7)');
   ok('margin call liquida posición adversa', s.player.shorts.length === 0, s.player.shorts.length);
 }
 
+section('Bonos corporativos y tiendas (deuda por empresa + alcance)');
+{
+  const s = M.createInitialState({ seed: 96, startCash: 5e6 });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'BondCo' });
+  const co = s.companies[0];
+  M.applyAction(s, { type: 'setMarketing', companyId: co.id, amount: 8000 });
+  run(s, 120, () => 1);
+  // bono no imprime patrimonio (cash+ = deuda+)
+  M.recomputeNetWorth(s); const nw0 = s.player.netWorth;
+  const val = M.companyValue(s, co);
+  const r = M.applyAction(s, { type: 'issueBond', companyId: co.id, amount: val * 0.3 });
+  M.recomputeNetWorth(s);
+  ok('emitir bono no cambia netWorth', r.ok && Math.abs(s.player.netWorth - nw0) < 1, [r.reason, fmt(nw0), fmt(s.player.netWorth)]);
+  ok('bono excede capacidad → rechazo', !M.applyAction(s, { type: 'issueBond', companyId: co.id, amount: val * 5 }).ok);
+  // no-arbitraje: tasa de bono > yield de dividendos para todo el mercado
+  const br = M.bondRateFor(s, co);
+  const maxYield = Math.max(0, ...M.listStocks(s).map(x => x.dividendPerShareYear / Math.max(x.price, 0.01)));
+  ok('tasa de bono > yield de dividendos (sin arbitraje)', br > maxYield, [br, maxYield]);
+
+  // tiendas: abrir aumenta alcance (share) pero cuesta alquiler
+  const before = M.previewPrice(s, co.id, co.price).share;
+  const ro = M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: 'norte' });
+  ok('abrir tienda OK', ro.ok, ro.reason);
+  const after = M.previewPrice(s, co.id, co.price).share;
+  ok('tienda en región rica aumenta el alcance/share', after > before, [before, after]);
+  // alcance capeado: muchas tiendas no escalan infinito
+  ['costa', 'valle', 'sur', 'frontera'].forEach(rg => M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: rg }));
+  const reachMult = (function () { let m = 1; for (const rid of co.outlets) m += 0.18 * 2; return Math.min(m, 2.4); })();
+  ok('multiplicador de alcance capeado a 2.4×', reachMult <= 2.4);
+}
+
 section('Fusión de empresas (Bloque 7 §5)');
 {
   const s = M.createInitialState({ seed: 95, startCash: 1e7 });

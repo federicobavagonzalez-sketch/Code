@@ -279,6 +279,21 @@ abarata el costo variable `(0.85 + 0.15·avgWageLvl)`; producir lejos de la
 región de venta suma logística `(0.02 + 0.06·avgDist)·fuelIndex`. La expansión
 geográfica (construir fábricas en otras regiones) es una palanca real.
 
+TIENDAS RETAIL (`company.outlets[]`): además de la región sede, una empresa
+puede abrir tiendas en otras regiones para ampliar su ALCANCE de mercado
+(reachMod = regionMod_sede · multiplicador, con rendimientos decrecientes y
+CAP 2.4×). Cada tienda cuesta apertura (≈1 año de alquiler) + alquiler semanal
+que escala con la población local. Modelo de alcance acotado (no sub-mercados
+por región) para no reescribir la resolución de demanda; competidores no usan
+tiendas, así que el balance base no cambia.
+
+BONOS CORPORATIVOS (`issueBond`, loan.type='bond'): deuda garantizada por una
+empresa puntual (no usa el límite de crédito personal). Capacidad =
+`companyValue·0.6 − bonos vigentes`. Tasa `bondRateFor` mejor para empresas
+grandes/rentables, piso 5% (> yield dividendos 4.5% → sin arbitraje). Reutiliza
+la amortización de préstamos. Da a las corporaciones acceso a capital escalado
+por su tamaño.
+
 Demanda local = `baseDemand·(pop/refPop)·wealthIndex·demandMod[industry]`.
 Inmueble: ingreso = `rentPerTick·occupancy`. Ocupación depende de oferta/demanda
 regional de ese tipo (construir mucho del mismo tipo baja ocupación/renta).

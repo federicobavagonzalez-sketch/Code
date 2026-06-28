@@ -292,12 +292,25 @@
         '<button class="btn ghost" onclick="MG.train(\'' + co.id + '\')">Capacitar</button>' +
       '</div></div>';
 
-    // integración + corporativo
+    // red de tiendas (alcance de mercado en otras regiones)
+    var outRegions = (co.outlets || []).map(function (rid) { return S.regions.find(function (x) { return x.id === rid; }); }).filter(Boolean);
+    var avail = S.regions.filter(function (r) { return r.id !== co.region && (co.outlets || []).indexOf(r.id) < 0; });
+    h += '<div class="card"><div class="ttl">Red de tiendas (alcance)</div>' +
+      '<div class="sm muted">Vendés en <b>' + esc(hr ? hr.name : co.region) + '</b> + tus tiendas. Más tiendas = más alcance (capeado), con alquiler semanal.</div>' +
+      (outRegions.length ? outRegions.map(function (r) { return '<div class="srow sm"><span>🏬 ' + esc(r.name) + '</span><span class="muted">alquiler ' + fmtUSD(r.population / 1e6 * 1500 * S.macro.inflationIndex) + '/sem</span><button class="btn ghost" style="padding:4px 8px;min-height:0" onclick="MG.closeOutlet(\'' + co.id + '\',\'' + r.id + '\')">Cerrar</button></div>'; }).join('') : '<div class="sm muted">Sin tiendas fuera de la sede.</div>') +
+      (avail.length ? '<div class="row"><select id="i_outreg" onchange="MG.outletPrev(\'' + co.id + '\')">' + avail.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' — pob ' + (r.population / 1e6).toFixed(1) + 'M, riqueza ' + r.wealthIndex.toFixed(2) + '</option>'; }).join('') + '</select></div>' +
+        '<button class="btn ghost" id="outBtn" onclick="MG.openOutlet(\'' + co.id + '\')">Abrir tienda (' + fmtUSD(avail[0].population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')</button>' : '') + '</div>';
+
+    // integración + corporativo + financiamiento
     var mergeable = S.companies.filter(function (c) { return c.id !== co.id && c.productId === co.productId && !c.public; });
+    var coVal = E.companyValue(S, co);
+    var bondExisting = S.player.loans.filter(function (l) { return l.type === 'bond' && l.companyId === co.id; }).reduce(function (s, l) { return s + l.balance; }, 0);
+    var bondCap = Math.max(0, coVal * 0.6 - bondExisting);
     h += '<div class="card"><div class="ttl">Estrategia corporativa</div>' +
       '<label class="chk"><input type="checkbox" ' + (co.vertical ? 'checked' : '') + ' onclick="MG.vert(\'' + co.id + '\',this.checked)"> Integración vertical (produce insumos −30% costo)</label>' +
       (co.public ? '<div class="sm good">Cotiza en bolsa (' + co.ticker + '), float ' + pct(co.floatPct) + '</div>'
         : '<button class="btn ghost" onclick="MG.openIpo(\'' + co.id + '\')">Salir a bolsa (IPO)</button>') +
+      '<button class="btn ghost" onclick="MG.openBond(\'' + co.id + '\')">Emitir bono corporativo (cap. ' + fmtUSD(bondCap) + ' @ ' + (E.bondRateFor(S, co) * 100).toFixed(1) + '%)</button>' +
       (!co.public && mergeable.length ? '<button class="btn ghost" onclick="MG.openMerge(\'' + co.id + '\')">Fusionar otra empresa de ' + esc(p.name) + ' acá</button>' : '') +
       '<button class="btn danger ghost" onclick="MG.sellco(\'' + co.id + '\')">Vender empresa</button></div>';
     return h;
@@ -332,8 +345,17 @@
         }).join('') +
         (youHere ? '<div class="sm muted" style="margin-top:6px">Tu cuota de mercado en el tiempo</div><canvas id="sc_' + pid + '" width="480" height="56"></canvas>' : '') + '</div>';
     });
+    // salud financiera de competidores
+    var alive = S.competitors.filter(function (c) { return !c.dead; }).map(function (c) { return { c: c, h: E.competitorHealth(S, c) }; }).sort(function (a, b) { return a.h.score - b.h.score; });
+    h += '<div class="card"><div class="ttl">Salud de competidores</div><div class="sm muted">Quién pierde plata y podría quebrar (liberando su cuota). Ordenado por riesgo.</div>' +
+      alive.slice(0, 12).map(function (x) {
+        var col = x.h.score < 0.45 ? 'bad' : x.h.score < 0.6 ? 'warn' : 'good';
+        return '<div class="srow sm"><span class="' + col + '">●</span><span>' + esc(x.c.name) + '</span><span class="chip">' + esc(S.products[x.c.productId].name) + '</span>' +
+          '<span class="bar mini-bar"><div style="width:' + (x.h.score * 100).toFixed(0) + '%"></div></span><span class="' + col + ' sm">' + x.h.label + '</span></div>';
+      }).join('') + '</div>';
+
     // M&A
-    h += '<div class="card"><div class="ttl">Adquisiciones (M&A)</div><div class="sm muted">Comprá competidores: valor + prima de control ' + pct(E.C.CONTROL_PREMIUM) + '.</div></div>';
+    h += '<div class="card"><div class="ttl">Adquisiciones (M&A)</div><div class="sm muted">Comprá competidores: valor + prima de control ' + pct(E.C.CONTROL_PREMIUM) + '. Los "en riesgo" suelen salir más baratos.</div></div>';
     var comps = S.competitors.filter(function (c) { return !c.dead; }).map(function (c) { return { c: c, v: E.competitorValue(S, c) }; }).sort(function (a, b) { return a.v - b.v; });
     h += comps.slice(0, 14).map(function (x) {
       var cost = x.v * (1 + E.C.CONTROL_PREMIUM);
@@ -377,7 +399,8 @@
     h += '<div class="card"><div class="ttl">Préstamos activos</div>';
     if (!p.loans.length) h += '<div class="muted sm">Sin deudas. ¡Bien!</div>';
     else h += p.loans.map(function (l) {
-      var name = ({ student: 'Deuda estudiantil', business: 'Empresarial', personal: 'Personal', mortgage: 'Hipoteca', lineOfCredit: 'Línea de crédito' })[l.type] || l.type;
+      var name = ({ student: 'Deuda estudiantil', business: 'Empresarial', personal: 'Personal', mortgage: 'Hipoteca', lineOfCredit: 'Línea de crédito', bond: 'Bono corporativo' })[l.type] || l.type;
+      if (l.type === 'bond' && l.companyId) { var bc = S.companies.find(function (c) { return c.id === l.companyId; }); if (bc) name += ' · ' + esc(bc.name); }
       return '<div class="lrow"><div class="row"><b>' + name + '</b><span class="' + (l.missed ? 'bad' : 'muted') + ' sm">' + (l.missed ? l.missed + ' atrasos' : 'al día') + '</span></div>' +
         '<div class="grid3 sm">' + mini('Saldo', fmtUSD(l.balance)) + mini('Tasa', (l.annualRate * 100).toFixed(1) + '%') + mini('Cuota/sem', fmtFull(l.paymentPerTick)) + '</div>' +
         '<div class="row3"><button class="btn ghost" onclick="MG.payLoan(\'' + l.id + '\',5000)">Pagar +$5K</button>' +
@@ -541,6 +564,20 @@
   }
   function doMerge(id) { var r = act({ type: 'mergeCompanies', intoId: id, fromId: el('merge_from').value }); if (r.ok) { closeModal(); toast('Empresas fusionadas.'); } }
 
+  // emisión de bono corporativo
+  function openBond(id) {
+    var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return;
+    var val = E.companyValue(S, co);
+    var existing = S.player.loans.filter(function (l) { return l.type === 'bond' && l.companyId === id; }).reduce(function (s, l) { return s + l.balance; }, 0);
+    var cap = Math.max(0, val * 0.6 - existing), rate = E.bondRateFor(S, co);
+    if (cap < 1000) { toast('Capacidad de bonos casi nula (la empresa debe valer más).'); return; }
+    modal('Emitir bono corporativo — ' + esc(co.name),
+      '<div class="sm muted">Deuda garantizada por la empresa (no usa tu límite de crédito personal). Capacidad: <b>' + fmtUSD(cap) + '</b> · tasa <b>' + (rate * 100).toFixed(1) + '%</b> anual · plazo 3 años. Las empresas grandes y rentables consiguen tasas más bajas.</div>' +
+      '<div class="row"><span class="lbl">Monto</span><input type="number" id="bond_amt" value="' + Math.round(cap * 0.5) + '"></div>',
+      'Emitir', 'MG.doBond(\'' + id + '\')');
+  }
+  function doBond(id) { var r = act({ type: 'issueBond', companyId: id, amount: num('bond_amt') }); if (r.ok) { closeModal(); toast('Bono emitido.'); } }
+
   // refinanciación con previsualización de la nueva tasa
   function refiPreview(id) {
     var l = S.player.loans.find(function (x) { return x.id === id; }); if (!l) return;
@@ -638,6 +675,10 @@
     vert: function (id, on) { act({ type: 'setVertical', companyId: id, on: on }); },
     openIpo: openIpo, ipoPrev: ipoPrev, doIpo: doIpo,
     openMerge: openMerge, doMerge: doMerge,
+    openBond: openBond, doBond: doBond,
+    openOutlet: function (id) { act({ type: 'openOutlet', companyId: id, region: (el('i_outreg') || {}).value }); },
+    closeOutlet: function (id, rid) { act({ type: 'closeOutlet', companyId: id, region: rid }); },
+    outletPrev: function (id) { var r = S.regions.find(function (x) { return x.id === (el('i_outreg') || {}).value; }); var b = el('outBtn'); if (b && r) b.textContent = 'Abrir tienda (' + fmtUSD(r.population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')'; },
     sellco: function (id) { if (confirm('¿Vender esta empresa?')) { act({ type: 'sellCompany', companyId: id }); coView = null; render(); } },
     acquire: function (id) { act({ type: 'acquire', competitorId: id }); },
     takeLoan: function () { act({ type: 'takeLoan', amount: num('i_loan'), loanType: el('i_ltype').value, termTicks: parseInt(el('i_lterm').value, 10) }); },
