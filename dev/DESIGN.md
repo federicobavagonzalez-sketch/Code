@@ -290,11 +290,17 @@ Inflación: `annualInfl = baseInfl + cycleBonus(phase)`;
 (realNetWorth cae).
 Tasa (Taylor): `target = neutral + 1.5·(annualInfl−inflTarget) + 0.5·phase;
 rate += (target−rate)·0.05`. Base de loanRate, cashYield, múltiplos.
-Eventos (~30): probabilidad/tick seedeada, condiciones, choices con effects
-(algunos probabilísticos). Categorías: financieros, operativos, competitivos,
-regulatorios (antimonopolio si concentra share), macro/shocks, oportunidades.
-**Ningún evento es game-over instantáneo; todo evento negativo tiene mitigación.**
-Reproducible por seed.
+Eventos (30 en catálogo): probabilidad/tick seedeada, condiciones, choices con
+effects (algunos probabilísticos). Categorías: financieros, operativos,
+competitivos, regulatorios (antimonopolio si concentra share), macro/shocks,
+oportunidades. **Ningún evento es game-over instantáneo; todo evento negativo
+tiene mitigación.** Reproducible por seed.
+
+SEGUROS: `player.insured` (acción `setInsurance`). Prima semanal
+`insuranceCostFor(state)` que escala con la exposición (empresas + inmuebles +
+patrimonio). El helper `applyHit(state, amount)` aplica las pérdidas de cash de
+los eventos y, si hay seguro, reduce el golpe un 60%. Tradeoff clásico: pagás
+siempre por protección que quizá no necesites.
 
 ---
 

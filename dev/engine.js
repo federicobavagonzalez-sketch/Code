@@ -137,6 +137,16 @@
   }
   let _idc = 1;
   function uid(prefix) { return prefix + '_' + (_idc++); }
+  // costo semanal del seguro: escala con la exposición (empresas + inmuebles + patrimonio)
+  function insuranceCostFor(state) {
+    return (600 + state.companies.length * 700 + state.realEstate.length * 350 + Math.max(0, state.player.netWorth) * 0.00008) * state.macro.inflationIndex;
+  }
+  // aplica una pérdida de cash de un evento; el seguro reduce el golpe un 60%
+  function applyHit(state, amount) {
+    const reduced = state.player.insured ? amount * 0.4 : amount;
+    state.player.cash -= reduced;
+    return reduced;
+  }
 
   // --------------------------------------------------------------- COMPETIDORES
   const COMP_NAMES = {
@@ -206,7 +216,7 @@
         inquiries: [], loans: [], studentLoanId: null,
         stocks: {}, taxCarryForward: 0, quarterProfitAccum: 0, lastTaxTick: 0,
         insolventStreak: 0, netWorth: 0, realNetWorth: 0, ownedProperties: 0,
-        liquidationsBlocked: false,
+        liquidationsBlocked: false, insured: false,
       },
       companies: [], products: buildProducts(), markets: {}, regions: buildRegions(),
       competitors: [], stocks: {}, realEstate: [],
@@ -653,6 +663,8 @@
         if (l.missed === 1) pushLog(state, 'Cuota impaga (' + l.type + '). El interés se capitaliza y tu score baja gradualmente.', 'warn');
       }
     }
+    // prima de seguro (sumidero constante; mitiga eventos negativos)
+    if (pl.insured) { const ic = insuranceCostFor(state); pl.cash -= ic; state._quarterProfit -= ic; }
     // interés sobre cash positivo
     const cashInt = Math.max(pl.cash, 0) * (C.CASH_YIELD / 52);
     pl.cash += cashInt; state._quarterProfit += cashInt;
@@ -1103,6 +1115,11 @@
         pushLog(state, 'Proyecto de I+D iniciado: ' + node.name + '. Asigná presupuesto de I+D en tus empresas.', 'info');
         return { ok: true };
       }
+      case 'setInsurance': {
+        pl.insured = !!A.on;
+        pushLog(state, pl.insured ? 'Contrataste un seguro corporativo (' + Math.round(insuranceCostFor(state)).toLocaleString('en') + '/sem). Mitiga golpes de eventos.' : 'Cancelaste el seguro.', 'info');
+        return { ok: true };
+      }
       case 'chooseEvent': {
         if (!state.event.active) return bad('No hay evento activo');
         return resolveEvent(state, A.choiceIndex);
@@ -1184,7 +1201,7 @@
     { id: 'breakdown', title: 'Avería en fábrica', cond: s => s.companies.length > 0,
       desc: 'Una de tus fábricas se averió. Podés pagar la reparación o producir a media capacidad.',
       choices: [
-        { label: 'Reparar ya (caro)', hint: 'Pagás pero seguís a full', apply: s => { const co = s.companies[0]; const cost = co.factories[0].capacity * 4; s.player.cash -= cost; } },
+        { label: 'Reparar ya (caro)', hint: 'Pagás pero seguís a full', apply: s => { const co = s.companies[0]; applyHit(s, co.factories[0].capacity * 4); } },
         { label: 'Producir a media máquina', hint: 'Sin gasto, menos capacidad', apply: s => { const co = s.companies[0]; co.factories[0].condition = clamp(co.factories[0].condition - 0.3, 0.3, 1); } },
       ] },
     { id: 'supplier', title: 'Proveedor sube precios', cond: s => s.companies.length > 0,
@@ -1265,7 +1282,78 @@
     { id: 'taxChange', title: 'Cambio impositivo regional', desc: 'Una región cambia su tasa impositiva.',
       choices: [
         { label: 'Aceptar', hint: 'Pequeño ajuste', apply: s => { const r = pick(s, s.regions); r.taxRate = clamp(r.taxRate + 0.02, 0.1, 0.35); } },
-        { label: 'Lobby (pagar)', hint: 'Evitás el alza', apply: s => { s.player.cash -= 15000; } },
+        { label: 'Lobby (pagar)', hint: 'Evitás el alza', apply: s => { applyHit(s, 15000); } },
+      ] },
+    { id: 'insuranceOffer', title: 'Oferta de seguro corporativo', cond: s => !s.player.insured,
+      desc: 'Una aseguradora te ofrece cobertura: una prima semanal que reduce el golpe de averías, desastres y juicios.',
+      choices: [
+        { label: 'Contratar seguro', hint: '≈ ' + 'prima semanal según tu tamaño', apply: s => { s.player.insured = true; } },
+        { label: 'No, asumo el riesgo', hint: 'Sin prima', apply: () => {} },
+      ] },
+    { id: 'lawsuit', title: 'Demanda judicial', cond: s => s.companies.length > 0,
+      desc: 'Un cliente te demanda. Podés llegar a un acuerdo o ir a juicio (riesgo mayor).',
+      choices: [
+        { label: 'Acordar (pagar)', hint: 'Costo cierto, cubierto por seguro', apply: s => { applyHit(s, Math.max(30000, s.player.netWorth * 0.01)); } },
+        { label: 'Ir a juicio', hint: '50% de no pagar nada, 50% el doble', apply: s => { if (rngNext(s) < 0.5) applyHit(s, Math.max(60000, s.player.netWorth * 0.02)); } },
+      ] },
+    { id: 'recall', title: 'Retiro de producto', cond: s => s.companies.some(c => state_obsProduct(s, c.productId)),
+      desc: 'Un defecto obliga a retirar un producto del mercado. Cubrir el retiro cuesta, ignorarlo daña la marca.',
+      choices: [
+        { label: 'Retirar y reparar', hint: 'Pagás (cubierto por seguro)', apply: s => { applyHit(s, Math.max(40000, s.player.netWorth * 0.012)); } },
+        { label: 'Minimizar el caso', hint: 'Ahorrás, cae la marca', apply: s => { for (const co of s.companies) co.brandStrength = clamp(co.brandStrength - 0.12, 0, 1); } },
+      ] },
+    { id: 'poach', title: 'Te roban talento', cond: s => s.companies.some(c => c.employees.avgSkill > 0.55),
+      desc: 'Un competidor intenta llevarse a tu mejor gente. ¿Hacés una contraoferta?',
+      choices: [
+        { label: 'Contraoferta (subir salarios)', hint: 'Retenés el equipo', apply: s => { for (const co of s.companies) { co.employees.avgWage *= 1.08; co.employees.morale = clamp(co.employees.morale + 0.1, 0, 1); } } },
+        { label: 'Dejarlos ir', hint: 'Perdés skill', apply: s => { for (const co of s.companies) co.employees.avgSkill = clamp(co.employees.avgSkill - 0.08, 0.1, 1); } },
+      ] },
+    { id: 'disaster', title: 'Desastre natural', cond: s => s.companies.length > 0 || s.realEstate.length > 0,
+      desc: 'Un desastre golpea una región donde operás. Reparar cuesta; el seguro mitiga buena parte.',
+      choices: [
+        { label: 'Reparar todo', hint: 'Golpe fuerte, cubierto por seguro', apply: s => { applyHit(s, Math.max(50000, s.player.netWorth * 0.025)); } },
+        { label: 'Reparación parcial', hint: 'Menos gasto, cae condición', apply: s => { applyHit(s, Math.max(15000, s.player.netWorth * 0.008)); for (const co of s.companies) co.factories.forEach(f => f.condition = clamp(f.condition - 0.15, 0.3, 1)); } },
+      ] },
+    { id: 'cyber', title: 'Ciberataque', cond: s => s.companies.some(c => ['tech', 'electronica', 'semis'].includes(c.industry)),
+      desc: 'Hackearon tus sistemas. Reforzar la seguridad cuesta; ignorarlo arriesga una fuga peor.',
+      choices: [
+        { label: 'Pagar y blindar', hint: 'Cubierto por seguro', apply: s => { applyHit(s, 45000); } },
+        { label: 'Arriesgar (40% fuga)', hint: 'Probabilístico', apply: s => { if (rngNext(s) < 0.4) { applyHit(s, 130000); for (const co of s.companies) co.brandStrength = clamp(co.brandStrength - 0.08, 0, 1); } } },
+      ] },
+    { id: 'tariff', title: 'Nuevos aranceles', desc: 'Una guerra comercial impone aranceles a las importaciones de insumos.',
+      choices: [
+        { label: 'Absorber el costo', hint: 'Sube combustible/insumos', apply: s => { s.macro.fuelIndex = clamp(s.macro.fuelIndex + 0.1, 0.6, 2.5); } },
+        { label: 'Relocalizar (pagar)', hint: 'Costo único, evitás el alza', apply: s => { applyHit(s, 35000); } },
+      ] },
+    { id: 'celeb', title: 'Auspicio de una celebridad', cond: s => s.companies.length > 0,
+      desc: 'Una figura famosa quiere asociarse a tu marca. Caro, pero dispara el reconocimiento.',
+      choices: [
+        { label: 'Contratar (caro)', hint: '+marca en todas tus empresas', apply: s => { s.player.cash -= 50000; for (const co of s.companies) co.brandStrength = clamp(co.brandStrength + 0.15, 0, 1); } },
+        { label: 'Pasar', hint: '', apply: () => {} },
+      ] },
+    { id: 'viral', title: 'Producto viral', cond: s => s.companies.length > 0,
+      desc: 'Uno de tus productos se volvió tendencia en redes. La demanda se dispara temporalmente.',
+      choices: [
+        { label: 'Subir producción y aprovechar', hint: 'Más volumen', apply: s => { for (const co of s.companies) { co.productionTarget *= 1.25; co.brandStrength = clamp(co.brandStrength + 0.08, 0, 1); } } },
+        { label: 'Mantener la calidad', hint: 'Sin sobreexigir', apply: s => { for (const co of s.companies) co.brandStrength = clamp(co.brandStrength + 0.04, 0, 1); } },
+      ] },
+    { id: 'rateCut', title: 'Recorte de tasas', cond: s => s.macro.interestRate > 0.04,
+      desc: 'El banco central recorta la tasa de referencia para estimular la economía.',
+      choices: [
+        { label: 'Aprovechar para endeudarse', hint: 'Tasas más bajas ahora', apply: s => { s.macro.interestRate = clamp(s.macro.interestRate - 0.015, 0.005, 0.25); } },
+        { label: 'Sin cambios', hint: '', apply: s => { s.macro.interestRate = clamp(s.macro.interestRate - 0.01, 0.005, 0.25); } },
+      ] },
+    { id: 'grant', title: 'Subsidio a la innovación', cond: s => s.companies.some(c => c.rndBudget > 0),
+      desc: 'El Estado premia tu inversión en I+D con un subsidio.',
+      choices: [
+        { label: 'Aceptar subsidio', hint: 'Cash + impulso de skill', apply: s => { s.player.cash += 40000; for (const co of s.companies) co.employees.avgSkill = clamp(co.employees.avgSkill + 0.04, 0, 1); } },
+        { label: 'Rechazar (sin ataduras)', hint: '', apply: () => {} },
+      ] },
+    { id: 'union', title: 'Negociación sindical', cond: s => s.companies.some(c => c.employees.count > 8),
+      desc: 'El sindicato propone un convenio colectivo.',
+      choices: [
+        { label: 'Firmar convenio', hint: '+salarios, +moral', apply: s => { for (const co of s.companies) { co.employees.avgWage *= 1.06; co.employees.morale = clamp(co.employees.morale + 0.12, 0, 1); } } },
+        { label: 'Rechazar', hint: 'Cae moral', apply: s => { for (const co of s.companies) co.employees.morale = clamp(co.employees.morale - 0.1, 0.05, 1); } },
       ] },
   ];
   function state_obs(s, c) { return state_obsProduct(s, c.productId); }
@@ -1274,6 +1362,32 @@
   // ------------------------------------------------------ SERIALIZACIÓN
   function serialize(state) { return JSON.stringify(state); }
   function deserialize(str) { return JSON.parse(str); }
+
+  // previsualización read-only: estima venta/share/margen a un precio hipotético (no muta el estado)
+  function previewPrice(state, companyId, hypoPrice) {
+    const co = state.companies.find(function (c) { return c.id === companyId; });
+    if (!co) return null;
+    const pid = co.productId, sellers = [];
+    for (const c of state.competitors) if (c.productId === pid && !c.dead)
+      sellers.push({ ref: c, isPlayer: false, productId: pid, price: c.price, qualityLevel: c.qualityLevel, fresh: c.fresh, brandStrength: c.brandStrength, marketingBudget: c.marketingBudget, region: c.region, qualityCeiling: c.qualityCeiling });
+    for (const x of state.companies) if (x.productId === pid)
+      sellers.push({ ref: x, isPlayer: true, productId: pid, price: x.id === companyId ? hypoPrice : x.price, qualityLevel: x.qualityLevel, fresh: x.fresh, brandStrength: x.brandStrength, marketingBudget: x.marketingBudget, region: x.region, qualityCeiling: x.qualityCeiling });
+    let sumA = 0; for (const s of sellers) { s.A = sellerAttr(state, s); sumA += s.A; }
+    const market = state.markets[pid], product = state.products[pid], mm = macroMult(state);
+    let indexPrice = 0, avgQual = 0, avgMkt = 0;
+    for (const s of sellers) {
+      s.share = s.A / sumA; indexPrice += s.share * s.price;
+      avgQual += s.share * (1 + C.QUAL_W * clamp(s.qualityLevel / Math.max(s.qualityCeiling, 1), 0, 1));
+      avgMkt += s.share * mktMultiplier(s.marketingBudget, s.isPlayer ? state.tech.mktBonus : 0);
+    }
+    let totalDemand = clamp(fin(market.baseDemand * Math.pow(indexPrice / market.referencePrice, -product.elasticity) * avgQual * avgMkt * mm, 0), 0, market.baseDemand * 8);
+    const me = sellers.find(function (s) { return s.isPlayer && s.ref === co; });
+    const demand = totalDemand * me.share;
+    const sellable = Math.min(demand, effectiveCapacity(co));
+    const unitCost = co.lastUnitCost || (product.baseVarCost * state.macro.inflationIndex + inputCost(state, pid, co.vertical));
+    const margin = hypoPrice > 0 ? (hypoPrice - unitCost) / hypoPrice : 0;
+    return { demand: demand, share: me.share, sellable: sellable, unitCost: unitCost, margin: margin, profitEst: sellable * (hypoPrice - unitCost) };
+  }
 
   // util para UI: lista de tickers de acciones vivas
   function listStocks(state) {
@@ -1286,6 +1400,6 @@
     C, STAGES, createInitialState, tick, applyAction, recomputeNetWorth,
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
-    PLAYABLE, buildProducts,
+    PLAYABLE, buildProducts, previewPrice, insuranceCostFor,
   };
 });

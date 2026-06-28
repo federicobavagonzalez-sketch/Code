@@ -3,7 +3,7 @@
 (function () {
   'use strict';
   var E = window.MAGNATE;
-  var S = null, speed = 0, timer = null, active = 'dash', coView = null, toastT = null;
+  var S = null, speed = 0, timer = null, active = 'dash', coView = null, toastT = null, victoryShown = false;
   var SAVE_KEY = 'magnate_save_v1';
 
   // ----------------------------------------------------------------- utilidades
@@ -33,7 +33,7 @@
   // --------------------------------------------------------------- ciclo de vida
   function newGame(seed, startCash) {
     S = E.createInitialState({ seed: seed >>> 0, startCash: startCash });
-    active = 'dash'; coView = null; speed = 0;
+    active = 'dash'; coView = null; speed = 0; victoryShown = false;
     save(); show('game'); render();
   }
   function save() { try { localStorage.setItem(SAVE_KEY, E.serialize(S)); } catch (e) {} }
@@ -58,6 +58,7 @@
     if (S.tick % 8 === 0) save();
     if (S.event.active) { setSpeed(0); render(); openEvent(); return; }
     if (S.gameOver) { setSpeed(0); render(); openGameOver(); return; }
+    if (S.won && !victoryShown) { victoryShown = true; setSpeed(0); render(); openVictory(); return; }
     render();
   }
 
@@ -227,10 +228,11 @@
         mini('Share', pct(co.marketShare)) + mini('Vendido/sem', fmtNum(co.lastUnitsSold)) + '</div>' +
       '<div class="grid3 sm">' + mini('Inventario', fmtNum(co.inventory)) + mini('Costo unit.', fmtFull(unit)) + mini('Valor', fmtUSD(E.companyValue(S, co))) + '</div></div>';
 
-    // precio
+    // precio (con previsualización en vivo del efecto esperado)
     h += '<div class="card"><div class="ttl">Precio</div>' +
-      '<div class="row"><input type="number" id="i_price" value="' + co.price.toFixed(2) + '" step="0.01"><button class="btn" onclick="MG.setPrice(\'' + co.id + '\')">Fijar</button></div>' +
-      '<div class="sm ' + (belowCost ? 'bad' : 'muted') + '">Costo unitario ' + fmtFull(unit) + ' · margen ' + pct(margin) + (belowCost ? ' · ⚠ VENDÉS A PÉRDIDA' : '') + ' · ref. mercado ' + fmtFull(S.markets[co.productId].referencePrice) + '</div></div>';
+      '<div class="row"><input type="number" id="i_price" value="' + co.price.toFixed(2) + '" step="0.01" oninput="MG.pricePrev(\'' + co.id + '\')"><button class="btn" onclick="MG.setPrice(\'' + co.id + '\')">Fijar</button></div>' +
+      '<div class="sm ' + (belowCost ? 'bad' : 'muted') + '">Costo unitario ' + fmtFull(unit) + ' · margen ' + pct(margin) + (belowCost ? ' · ⚠ VENDÉS A PÉRDIDA' : '') + ' · ref. mercado ' + fmtFull(S.markets[co.productId].referencePrice) + '</div>' +
+      '<div class="sm amber" id="pricePrev">' + pricePrevHtml(E.previewPrice(S, co.id, co.price)) + '</div></div>';
 
     // producción
     h += '<div class="card"><div class="ttl">Producción</div>' +
@@ -270,6 +272,10 @@
     return h;
   }
   function regLand(rid) { var r = S.regions.find(function (x) { return x.id === rid; }); return r ? r.landPrice : 1; }
+  function pricePrevHtml(pv) {
+    if (!pv) return '';
+    return '↳ estimado: ~' + fmtNum(pv.sellable) + ' u/sem · share ~' + pct(pv.share) + ' · resultado bruto ~<span class="' + (pv.profitEst >= 0 ? 'good' : 'bad') + '">' + fmtUSD(pv.profitEst) + '/sem</span>';
+  }
   function facCap(p) { return Math.max(10, p.baseDemand * 0.1); }
   function facCost(p, rid) { var r = S.regions.find(function (x) { return x.id === rid; }); return Math.max(4000, facCap(p) * p.refPrice * 0.2 * (r ? r.landPrice : 1)); }
 
@@ -320,6 +326,11 @@
       factorBar('Antigüedad (15%)', p.scoreFactors.age) +
       factorBar('Mix de crédito (10%)', p.scoreFactors.mix) +
       factorBar('Consultas recientes (10%)', p.scoreFactors.inquiries) + '</div>';
+
+    h += '<div class="card"><div class="ttl">Seguro corporativo</div>' +
+      '<div class="sm muted">Prima semanal que reduce un 60% el golpe de averías, desastres, juicios y ciberataques. Pagás siempre, te proteja o no.</div>' +
+      '<div class="row"><span class="' + (p.insured ? 'good' : 'muted') + '">' + (p.insured ? '● Contratado — ' + fmtUSD(E.insuranceCostFor(S)) + '/sem' : '○ Sin seguro') + '</span>' +
+      '<button class="btn ' + (p.insured ? 'ghost' : 'pri') + '" style="width:auto" onclick="MG.insurance(' + (!p.insured) + ')">' + (p.insured ? 'Cancelar' : 'Contratar (' + fmtUSD(E.insuranceCostFor(S)) + '/sem)') + '</button></div></div>';
 
     h += '<div class="card"><div class="ttl">Tomar préstamo</div>' +
       '<div class="row"><span class="lbl">Monto</span><input type="number" id="i_loan" value="50000"></div>' +
@@ -472,6 +483,25 @@
   }
   function chooseEvent(i) { var r = E.applyAction(S, { type: 'chooseEvent', choiceIndex: i }); if (r.ok) { closeModal(); save(); render(); } }
 
+  function openVictory() {
+    var p = S.player;
+    var coVal = S.companies.reduce(function (a, c) { return a + E.companyValue(S, c) * (1 - (c.floatPct || 0)); }, 0);
+    var stkVal = 0; for (var t in p.stocks) { var st = S.stocks[t]; if (st) stkVal += p.stocks[t] * st.price; }
+    var reVal = S.realEstate.reduce(function (a, pr) { return a + pr.currentValue; }, 0);
+    var dom = (coVal >= stkVal && coVal >= reVal) ? 'Operación / Empresas' : (stkVal >= reVal ? 'Financiera / Bolsa' : 'Inmobiliaria');
+    var peak = Math.max.apply(null, S.history.map(function (h) { return h.netWorth; }));
+    el('modalBox').innerHTML = '<div class="mhead" style="color:#f59e0b">🏆 ¡TRILLONARIO!</div><div class="mbody">' +
+      '<div class="mdesc">Llegaste a la cima. Construiste un imperio de un billón de dólares desde la deuda estudiantil.</div>' +
+      '<div class="grid2 sm">' +
+        kv('Patrimonio final', fmtUSD(p.netWorth)) + kv('Tiempo jugado', (Math.floor(S.tick / 52)) + ' años') +
+        kv('Pico de patrimonio', fmtUSD(peak)) + kv('Estrategia dominante', dom) +
+        kv('Empresas', S.companies.length) + kv('Propiedades', S.realEstate.length) +
+        kv('Score crediticio', p.creditScore) + kv('Crisis superadas', 'sí') +
+      '</div></div>' +
+      '<div class="mfoot"><button class="btn pri" onclick="MG.closeModal()">Seguir en modo libre</button></div>';
+    el('modal').style.display = 'flex';
+  }
+
   function openGameOver() {
     el('modalBox').innerHTML = '<div class="mhead bad">💀 BANCARROTA</div><div class="mbody"><div class="mdesc">Tu patrimonio quedó insolvente demasiadas semanas. Fin de la partida.</div>' +
       '<div class="sm muted">Sobreviviste ' + gameDate() + '. Patrimonio final ' + fmtUSD(S.player.netWorth) + '.</div></div>' +
@@ -530,6 +560,8 @@
     devProp: function (id) { act({ type: 'developProperty', propertyId: id }); },
     sellProp: function (id) { act({ type: 'sellProperty', propertyId: id }); },
     research: function (id) { act({ type: 'startResearch', techId: id }); },
+    insurance: function (on) { act({ type: 'setInsurance', on: on }); },
+    pricePrev: function (id) { var v = num('i_price'); var d = el('pricePrev'); if (d) d.innerHTML = pricePrevHtml(E.previewPrice(S, id, v)); },
     exportSave: exportSave, copyExport: copyExport, importSave: importSave, doImport: doImport,
     startNew: function () {
       var seed = (parseInt((el('ob_seed') || {}).value, 10) || Math.floor(Math.random() * 1e9));
@@ -541,7 +573,7 @@
 
   // ------------------------------------------------------------------------- BOOT
   function boot() {
-    if (load()) { show('game'); active = 'dash'; render(); if (S.event.active) openEvent(); }
+    if (load()) { victoryShown = !!(S && S.won); show('game'); active = 'dash'; render(); if (S.event.active) openEvent(); }
     else show('onboard');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
