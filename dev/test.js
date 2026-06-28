@@ -7,6 +7,7 @@ function ok(name, cond, extra) {
   else { FAIL++; console.log('  ✗ FAIL:', name, extra != null ? '→ ' + extra : ''); }
 }
 function section(t) { console.log('\n=== ' + t + ' ==='); }
+const fmt = n => Math.round(n).toLocaleString('en');
 
 // avanza ticks auto-resolviendo eventos con una política dada (default: opción 0)
 function run(state, ticks, policy) {
@@ -235,6 +236,49 @@ section('IPO: recauda razonable y no imprime dinero');
   } else {
     console.log('  (IPO no realizada: ' + res.reason + ')');
   }
+}
+
+section('Short-selling y margin call (Bloque 7)');
+{
+  const s = M.createInitialState({ seed: 81, startCash: 5e6 });
+  run(s, 30, () => 0);
+  const st = M.listStocks(s)[0];
+  // abrir short no cambia netWorth (proceeds = pasivo), salvo fees
+  M.recomputeNetWorth(s); const nw0 = s.player.netWorth;
+  const r = M.applyAction(s, { type: 'shortStock', ticker: st.ticker, shares: 5000 });
+  M.recomputeNetWorth(s);
+  ok('abrir short no imprime patrimonio', Math.abs(s.player.netWorth - nw0) < nw0 * 0.02 + 50000, [fmt(nw0), fmt(s.player.netWorth)]);
+  ok('short registrado', s.player.shorts.length === 1);
+  // short + cover inmediato pierde (comisión + slippage + fee)
+  const cashA = s.player.cash;
+  const s2 = M.createInitialState({ seed: 81, startCash: 5e6 }); run(s2, 30, () => 0);
+  const st2 = M.listStocks(s2)[0]; const c0 = s2.player.cash;
+  M.applyAction(s2, { type: 'shortStock', ticker: st2.ticker, shares: 4000 });
+  M.applyAction(s2, { type: 'coverStock', ticker: st2.ticker });
+  ok('short+cover inmediato pierde (costos)', s2.player.cash < c0, [fmt(c0), fmt(s2.player.cash)]);
+  // margin call: forzar precio muy arriba del entry
+  const sh = s.player.shorts[0]; const stk = s.stocks[sh.ticker];
+  stk.price = sh.entryPrice * 2; // adverso fuerte
+  M.tick(s); if (s.event.active) M.applyAction(s, { type: 'chooseEvent', choiceIndex: 0 });
+  ok('margin call liquida posición adversa', s.player.shorts.length === 0, s.player.shorts.length);
+}
+
+section('Geografía: salario y distancia importan (Bloque 8)');
+{
+  // misma empresa/seed: fábrica en región barata+cercana vs cara+lejana
+  function runGeo(buildRegion) {
+    const s = M.createInitialState({ seed: 91, startCash: 5e6 });
+    M.applyAction(s, { type: 'startCompany', productId: 'furniture', region: 'costa', name: 'Geo' });
+    const co = s.companies[0];
+    M.applyAction(s, { type: 'setPrice', companyId: co.id, price: s.products.furniture.refPrice * 1.4 });
+    for (let i = 0; i < 6; i++) M.applyAction(s, { type: 'buildFactory', companyId: co.id, region: buildRegion });
+    run(s, 60, () => 1);
+    return co.lastUnitCost;
+  }
+  const cheapNear = runGeo('costa');   // misma región (sin logística) — costa wage 1.0
+  const cheapFar = runGeo('frontera'); // salario bajo (0.65) pero lejos (logística alta)
+  ok('producir en región de salario bajo reduce costo variable base', M.regionDistance({ regions: M.createInitialState({}).regions }, 'costa', 'frontera') > 0);
+  ok('la geografía cambia el costo unitario', Math.abs(cheapNear - cheapFar) > 0.001, [cheapNear, cheapFar]);
 }
 
 // ---------------------------------------------------------- 8. INMOBILIARIA

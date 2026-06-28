@@ -31,6 +31,7 @@
     WIN_NETWORTH: 1e12,
     CONTROL_PREMIUM: 0.25,
     STAFF_PER_CAP: 1000, BASE_WAGE: 220, STOCK_INIT_PRICE: 40,
+    SHORT_INIT_MARGIN: 0.5, SHORT_MARGIN_CALL: 1.6, SHORT_BORROW: 0.06,
   };
   C.CONTROL_PREMIUM = 0.35;
 
@@ -214,7 +215,7 @@
         creditScore: C.START_SCORE,
         scoreFactors: { payment: 0.60, util: 0.9, age: 0, mix: 0.2, inquiries: 1 },
         inquiries: [], loans: [], studentLoanId: null,
-        stocks: {}, taxCarryForward: 0, quarterProfitAccum: 0, lastTaxTick: 0,
+        stocks: {}, shorts: [], taxCarryForward: 0, quarterProfitAccum: 0, lastTaxTick: 0,
         insolventStreak: 0, netWorth: 0, realNetWorth: 0, ownedProperties: 0,
         liquidationsBlocked: false, insured: false,
       },
@@ -301,6 +302,12 @@
   // -------------------------------------------------------------- VALUACIÓN
   function factoryCapacity(p) { return Math.max(10, p.baseDemand * 0.1); }
   function factoryCost(p, region) { return Math.max(4000, factoryCapacity(p) * p.refPrice * 0.2 * region.landPrice); }
+  function regionDistance(state, a, b) {
+    if (a === b) return 0;
+    const ia = state.regions.findIndex(r => r.id === a), ib = state.regions.findIndex(r => r.id === b);
+    if (ia < 0 || ib < 0) return 0.5;
+    return clamp(0.3 + 0.12 * Math.abs(ia - ib), 0, 1.3);
+  }
   function companyAssets(state, co) {
     let a = 0;
     for (const f of co.factories) a += (f.cost != null ? f.cost : f.capacity * 4) * f.condition; // valor de libro
@@ -339,6 +346,7 @@
     let nw = pl.cash;
     for (const co of state.companies) nw += companyValue(state, co) * (1 - (co.floatPct || 0));
     for (const t in pl.stocks) { const s = state.stocks[t]; if (s) nw += pl.stocks[t] * s.price; }
+    for (const sh of pl.shorts) { const s = state.stocks[sh.ticker]; if (s) nw -= sh.shares * s.price; } // pasivo: acciones que debés
     for (const pr of state.realEstate) nw += pr.currentValue;
     for (const co of state.companies) nw += co.inventory * state.products[co.productId].baseVarCost * state.macro.inflationIndex;
     nw -= totalDebt(state);
@@ -516,9 +524,14 @@
       if (rp) { const si = rp.sellers.find(x => x.isPlayer && x.ref === co); if (si) demand = si.demand; }
       const scaleFactor = clamp(1 - C.SCALE_K * Math.min(co.productionTarget, capEff), C.SCALE_MIN, 1);
       const effTech = clamp(state.tech.effBonus, 0, 0.35);
-      const varCostEff = (p.baseVarCost * m.inflationIndex + ic) * scaleFactor * (1 - effTech);
-      // logística: vender lejos de la región productora cuesta (fuel + bonus tech)
-      const logiCost = varCostEff * 0.04 * m.fuelIndex * (1 - clamp(state.tech.logiBonus, 0, 0.6));
+      // perfil geográfico de producción: salario y distancia ponderados por capacidad de cada fábrica
+      let totCap = 0, wWage = 0, wDist = 0;
+      for (const f of co.factories) { const fr = f.region || co.region; const rr = state.regions.find(r => r.id === fr) || { wageLevel: 1 }; totCap += f.capacity; wWage += f.capacity * rr.wageLevel; wDist += f.capacity * regionDistance(state, fr, co.region); }
+      const avgWage = totCap ? wWage / totCap : 1;
+      const avgDist = totCap ? wDist / totCap : 0;
+      // producir en regiones de salario bajo abarata; producir lejos del mercado encarece logística
+      const varCostEff = (p.baseVarCost * m.inflationIndex + ic) * scaleFactor * (1 - effTech) * (0.85 + 0.15 * avgWage);
+      const logiCost = varCostEff * (0.02 + 0.06 * avgDist) * m.fuelIndex * (1 - clamp(state.tech.logiBonus, 0, 0.6));
       const unitCostFull = varCostEff + logiCost;
       // make-to-demand: producir para cubrir demanda + buffer 1.5 sem, capeado por target y capacidad
       const desiredInv = demand * 1.5;
@@ -789,6 +802,20 @@
       pr.occupancy = clamp(0.7 + 0.3 * (demandUnits / supplyUnits - 1) * 0.3, 0.3, 1);
       pr.rentPerTick = pr.currentValue * 0.00175 * (1 + pr.developmentLevel * 0.25);
     }
+    // ventas en corto: fee de préstamo de acciones por tick + margin call si el precio sube fuerte
+    const pl = state.player;
+    for (let i = pl.shorts.length - 1; i >= 0; i--) {
+      const sh = pl.shorts[i], st = state.stocks[sh.ticker];
+      if (!st || st.dead) { pl.shorts.splice(i, 1); continue; }
+      const fee = sh.shares * st.price * (C.SHORT_BORROW / 52);
+      pl.cash -= fee; state._quarterProfit -= fee;
+      if (st.price >= sh.entryPrice * C.SHORT_MARGIN_CALL) {
+        const cost = sh.shares * st.price * (1 + C.COMMISSION);
+        pl.cash -= cost;
+        pushLog(state, '⚠ MARGIN CALL: liquidación forzada de tu posición corta en ' + sh.ticker + ' a USD ' + Math.round(st.price).toLocaleString('en') + '. Pérdida realizada.', 'danger');
+        pl.shorts.splice(i, 1);
+      }
+    }
   }
 
   // 9 -------------------------------------------------------------- CRÉDITO
@@ -876,7 +903,7 @@
           id: uid('co'), name: A.name || (p.name + ' Co'), industry: p.industry, region: region.id, productId: A.productId,
           price: p.refPrice, qualityLevel: 1, qualityCeiling: 6 + state.tech.ceilingBonus + (p.cat === 'tech' ? 4 : 0),
           inventory: 0, productionTarget: cap,
-          factories: [{ tier: 1, capacity: cap, condition: 1, cost: setupCost, fixedCostPerTick: setupCost * 0.012 }],
+          factories: [{ tier: 1, capacity: cap, condition: 1, cost: setupCost, fixedCostPerTick: setupCost * 0.012, region: region.id }],
           marketingBudget: 0, rndBudget: 0, brandStrength: 0.08, fresh: 1, vertical: !!A.vertical,
           employees: { count: Math.max(3, Math.round(cap / C.STAFF_PER_CAP)), avgSkill: 0.5, avgWage: C.BASE_WAGE * region.wageLevel, morale: 0.7 },
           cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: 0, profitHistory: [], lastUnitCost: 0,
@@ -919,12 +946,12 @@
       case 'buildFactory': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
         const p = state.products[co.productId];
-        const region = state.regions.find(r => r.id === co.region);
+        const region = state.regions.find(r => r.id === A.region) || state.regions.find(r => r.id === co.region);
         const cap = factoryCapacity(p);
         const cost = factoryCost(p, region);
         if (pl.cash < cost) return bad('Costo USD ' + Math.round(cost).toLocaleString('en'));
         pl.cash -= cost;
-        co.factories.push({ tier: 1, capacity: cap, condition: 1, cost: cost, fixedCostPerTick: cost * 0.012 });
+        co.factories.push({ tier: 1, capacity: cap, condition: 1, cost: cost, fixedCostPerTick: cost * 0.012, region: region.id });
         return { ok: true };
       }
       case 'hire': {
@@ -1032,6 +1059,39 @@
         s.price = Math.max(0.01, s.price);
         recomputeNetWorth(state);
         return { ok: true, proceeds };
+      }
+      case 'shortStock': {
+        const s = state.stocks[A.ticker]; if (!s || s.dead) return bad('Acción no disponible');
+        const shares = Math.max(0, Math.floor(A.shares || 0));
+        if (shares <= 0) return bad('Cantidad inválida');
+        const initMargin = shares * s.price * C.SHORT_INIT_MARGIN;
+        if (pl.cash < initMargin) return bad('Necesitás margen de USD ' + Math.round(initMargin).toLocaleString('en') + ' (50% del valor en corto).');
+        const impact = C.STOCK_IMPACT_K * shares / s.sharesOutstanding;
+        const avgPrice = s.price * (1 - impact / 2);
+        const proceeds = shares * avgPrice * (1 - C.COMMISSION);
+        pl.cash += proceeds;
+        s.price *= (1 - impact * 0.25); s.price = Math.max(0.01, s.price);
+        pl.shorts.push({ id: uid('sh'), ticker: A.ticker, shares, entryPrice: s.price, openTick: state.tick });
+        pushLog(state, 'Vendiste en corto ' + shares.toLocaleString('en') + ' de ' + A.ticker + ' (ganás si baja; pérdida ilimitada si sube).', 'info');
+        recomputeNetWorth(state);
+        return { ok: true, proceeds };
+      }
+      case 'coverStock': {
+        const pos = pl.shorts.find(x => x.id === A.shortId) || pl.shorts.find(x => x.ticker === A.ticker);
+        if (!pos) return bad('No tenés esa posición corta');
+        const s = state.stocks[pos.ticker];
+        if (!s) { pl.shorts = pl.shorts.filter(x => x !== pos); recomputeNetWorth(state); return { ok: true }; }
+        const shares = Math.min(Math.floor(A.shares || pos.shares), pos.shares);
+        if (shares <= 0) return bad('Cantidad inválida');
+        const impact = C.STOCK_IMPACT_K * shares / s.sharesOutstanding;
+        const avgPrice = s.price * (1 + impact / 2);
+        const cost = shares * avgPrice * (1 + C.COMMISSION);
+        if (pl.cash < cost) return bad('Necesitás USD ' + Math.round(cost).toLocaleString('en') + ' para recomprar y cerrar.');
+        pl.cash -= cost;
+        s.price *= (1 + impact * 0.25);
+        pos.shares -= shares; if (pos.shares <= 0.0001) pl.shorts = pl.shorts.filter(x => x !== pos);
+        recomputeNetWorth(state);
+        return { ok: true, cost };
       }
       case 'ipo': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
@@ -1151,7 +1211,7 @@
       id: uid('co'), name: c.name, industry: p.industry, region: c.region, productId: c.productId,
       price: c.price, qualityLevel: c.qualityLevel, qualityCeiling: c.qualityCeiling,
       inventory: 0, productionTarget: c.capacity * 0.9,
-      factories: [{ tier: 1, capacity: c.capacity, condition: 0.85, cost: c.capacity * p.refPrice * 0.3, fixedCostPerTick: c.fixedCost * 0.5 }],
+      factories: [{ tier: 1, capacity: c.capacity, condition: 0.85, cost: c.capacity * p.refPrice * 0.3, fixedCostPerTick: c.fixedCost * 0.5, region: c.region }],
       marketingBudget: c.marketingBudget, rndBudget: c.rndBudget, brandStrength: c.brandStrength, fresh: c.fresh, vertical: false,
       employees: { count: Math.max(3, Math.round(c.capacity / C.STAFF_PER_CAP)), avgSkill: 0.55, avgWage: C.BASE_WAGE, morale: 0.55 },
       cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: c.marketShare, profitHistory: [], lastUnitCost: 0,
@@ -1363,15 +1423,25 @@
   function serialize(state) { return JSON.stringify(state); }
   function deserialize(str) { return JSON.parse(str); }
 
-  // previsualización read-only: estima venta/share/margen a un precio hipotético (no muta el estado)
-  function previewPrice(state, companyId, hypoPrice) {
+  // previsualización read-only: estima venta/share/resultado con valores hipotéticos (no muta el estado)
+  function previewWith(state, companyId, ov) {
     const co = state.companies.find(function (c) { return c.id === companyId; });
     if (!co) return null;
+    ov = ov || {};
     const pid = co.productId, sellers = [];
     for (const c of state.competitors) if (c.productId === pid && !c.dead)
       sellers.push({ ref: c, isPlayer: false, productId: pid, price: c.price, qualityLevel: c.qualityLevel, fresh: c.fresh, brandStrength: c.brandStrength, marketingBudget: c.marketingBudget, region: c.region, qualityCeiling: c.qualityCeiling });
-    for (const x of state.companies) if (x.productId === pid)
-      sellers.push({ ref: x, isPlayer: true, productId: pid, price: x.id === companyId ? hypoPrice : x.price, qualityLevel: x.qualityLevel, fresh: x.fresh, brandStrength: x.brandStrength, marketingBudget: x.marketingBudget, region: x.region, qualityCeiling: x.qualityCeiling });
+    for (const x of state.companies) if (x.productId === pid) {
+      const me = x.id === companyId;
+      sellers.push({
+        ref: x, isPlayer: true, productId: pid,
+        price: me && ov.price != null ? ov.price : x.price,
+        qualityLevel: me && ov.qualityLevel != null ? ov.qualityLevel : x.qualityLevel,
+        fresh: x.fresh, brandStrength: x.brandStrength,
+        marketingBudget: me && ov.marketing != null ? ov.marketing : x.marketingBudget,
+        region: x.region, qualityCeiling: x.qualityCeiling,
+      });
+    }
     let sumA = 0; for (const s of sellers) { s.A = sellerAttr(state, s); sumA += s.A; }
     const market = state.markets[pid], product = state.products[pid], mm = macroMult(state);
     let indexPrice = 0, avgQual = 0, avgMkt = 0;
@@ -1384,10 +1454,15 @@
     const me = sellers.find(function (s) { return s.isPlayer && s.ref === co; });
     const demand = totalDemand * me.share;
     const sellable = Math.min(demand, effectiveCapacity(co));
+    const price = ov.price != null ? ov.price : co.price;
     const unitCost = co.lastUnitCost || (product.baseVarCost * state.macro.inflationIndex + inputCost(state, pid, co.vertical));
-    const margin = hypoPrice > 0 ? (hypoPrice - unitCost) / hypoPrice : 0;
-    return { demand: demand, share: me.share, sellable: sellable, unitCost: unitCost, margin: margin, profitEst: sellable * (hypoPrice - unitCost) };
+    const margin = price > 0 ? (price - unitCost) / price : 0;
+    const extraMkt = (ov.marketing != null ? ov.marketing : co.marketingBudget) - co.marketingBudget;
+    return { demand: demand, share: me.share, sellable: sellable, unitCost: unitCost, margin: margin, profitEst: sellable * (price - unitCost) - Math.max(0, extraMkt) };
   }
+  function previewPrice(state, id, price) { return previewWith(state, id, { price: price }); }
+  function previewMarketing(state, id, spend) { return previewWith(state, id, { marketing: spend }); }
+  function previewQuality(state, id, level) { return previewWith(state, id, { qualityLevel: level }); }
 
   // util para UI: lista de tickers de acciones vivas
   function listStocks(state) {
@@ -1400,6 +1475,6 @@
     C, STAGES, createInitialState, tick, applyAction, recomputeNetWorth,
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
-    PLAYABLE, buildProducts, previewPrice, insuranceCostFor,
+    PLAYABLE, buildProducts, previewPrice, previewMarketing, previewQuality, insuranceCostFor, regionDistance,
   };
 });

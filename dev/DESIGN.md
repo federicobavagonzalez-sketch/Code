@@ -242,8 +242,15 @@ Sigue fundamentales, no es ruleta.
 `Σ shares·divYear/52`. **Yield dividendos < retorno de operar bien y <
 loanRate** (no-arbitraje).
 Impacto de mercado: `priceImpact = k·orderSize/sharesOutstanding`; comprar
-empuja arriba, vender abajo. Comisión 0.5%. Comprar y vender la misma acción en
-el mismo tick pierde (comisión+slippage).
+empuja arriba, vender abajo (solo el 25% del impacto queda permanente — el resto
+es temporal, así no se infla netWorth comprando lo propio). Comisión 0.5%.
+Comprar y vender la misma acción en el mismo tick pierde (comisión+slippage).
+
+SHORT-SELLING (`player.shorts[]`): vendés acciones prestadas (recibís proceeds,
+creás un pasivo = shares·precio en netWorth → no imprime patrimonio al abrir).
+Margen inicial 50%. Fee de préstamo `SHORT_BORROW=6%/año` por tick. **Margin
+call**: si el precio sube ≥60% sobre la entrada, liquidación forzada (recompra a
+mercado). Ganás si baja; pérdida potencialmente ilimitada si sube.
 IPO: flotar 20–49% de empresa propia → recauda `floatPct·companyValue·(1−fees)`;
 cede ese % de dividendos/control. Repetir IPO/recompra no imprime dinero.
 Índice bursátil = promedio ponderado; sube en boom, baja en recesión (beta).
@@ -258,6 +265,12 @@ region = { id, name, population, wealthIndex, wageLevel, landPrice,
 property = { id, region, type, purchasePrice, currentValue, rentPerTick,
              occupancy, maintenancePerTick, mortgageLoanId, developmentLevel }
 ```
+Cada fábrica tiene su propia `region`. El costo unitario de la empresa usa el
+perfil geográfico ponderado por capacidad: producir en regiones de salario bajo
+abarata el costo variable `(0.85 + 0.15·avgWageLvl)`; producir lejos de la
+región de venta suma logística `(0.02 + 0.06·avgDist)·fuelIndex`. La expansión
+geográfica (construir fábricas en otras regiones) es una palanca real.
+
 Demanda local = `baseDemand·(pop/refPop)·wealthIndex·demandMod[industry]`.
 Inmueble: ingreso = `rentPerTick·occupancy`. Ocupación depende de oferta/demanda
 regional de ese tipo (construir mucho del mismo tipo baja ocupación/renta).

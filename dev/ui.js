@@ -234,21 +234,33 @@
       '<div class="sm ' + (belowCost ? 'bad' : 'muted') + '">Costo unitario ' + fmtFull(unit) + ' · margen ' + pct(margin) + (belowCost ? ' · ⚠ VENDÉS A PÉRDIDA' : '') + ' · ref. mercado ' + fmtFull(S.markets[co.productId].referencePrice) + '</div>' +
       '<div class="sm amber" id="pricePrev">' + pricePrevHtml(E.previewPrice(S, co.id, co.price)) + '</div></div>';
 
-    // producción
-    h += '<div class="card"><div class="ttl">Producción</div>' +
+    // producción + expansión geográfica
+    var hr = S.regions.find(function (x) { return x.id === co.region; });
+    var regGroups = {};
+    co.factories.forEach(function (f) { var rg = f.region || co.region; if (!regGroups[rg]) regGroups[rg] = { n: 0, cap: 0 }; regGroups[rg].n++; regGroups[rg].cap += f.capacity; });
+    var opsHtml = Object.keys(regGroups).map(function (rg) { var r = S.regions.find(function (x) { return x.id === rg; }); return '<div class="srow sm"><span>' + esc(r ? r.name : rg) + (rg === co.region ? ' · sede/venta' : '') + '</span><span class="muted">' + regGroups[rg].n + ' fáb · ' + fmtNum(regGroups[rg].cap) + ' u/sem</span></div>'; }).join('');
+    var facRegOpts = S.regions.map(function (r) { return '<option value="' + r.id + '"' + (r.id === co.region ? ' selected' : '') + '>' + esc(r.name) + ' — sal ' + r.wageLevel.toFixed(2) + ', tierra ' + r.landPrice.toFixed(2) + ', ' + (r.id === co.region ? 'sin logística' : 'dist ' + E.regionDistance(S, r.id, co.region).toFixed(2)) + '</option>'; }).join('');
+    h += '<div class="card"><div class="ttl">Producción y operaciones</div>' +
       '<div class="row"><input type="number" id="i_prod" value="' + Math.round(co.productionTarget) + '"><button class="btn" onclick="MG.setProd(\'' + co.id + '\')">Fijar objetivo</button></div>' +
-      '<div class="sm muted">Capacidad instalada ' + fmtNum(cap) + ' u/sem (limitada por dotación, skill y moral).</div>' +
-      '<button class="btn ghost" onclick="MG.build(\'' + co.id + '\')">+ Construir fábrica (' + fmtUSD(facCost(p, co.region)) + ')</button></div>';
+      '<div class="sm muted">Capacidad ' + fmtNum(cap) + ' u/sem. Vendés en <b>' + esc(hr ? hr.name : co.region) + '</b>. Producir donde el salario es bajo abarata; lejos de la sede suma costo logístico.</div>' +
+      opsHtml +
+      '<div class="ttl sm" style="margin-top:10px">Expansión geográfica</div>' +
+      '<div class="row"><select id="i_facreg" onchange="MG.facCostPrev(\'' + co.id + '\')">' + facRegOpts + '</select></div>' +
+      '<button class="btn ghost" onclick="MG.build(\'' + co.id + '\')" id="buildBtn">+ Construir fábrica (' + fmtUSD(facCost(p, co.region)) + ')</button></div>';
 
-    // calidad
+    // calidad (con previsualización del próximo nivel)
+    var nextQ = Math.min(co.qualityCeiling, co.qualityLevel + 1);
+    var qPrev = co.qualityLevel < co.qualityCeiling ? E.previewQuality(S, co.id, nextQ) : null;
     h += '<div class="card"><div class="ttl">Calidad</div>' +
       '<div class="bar"><div style="width:' + (co.qualityLevel / co.qualityCeiling * 100).toFixed(0) + '%"></div></div>' +
       '<div class="row sm"><span class="muted">Nivel ' + co.qualityLevel.toFixed(1) + ' / techo ' + co.qualityCeiling + '</span>' +
-      '<button class="btn ghost" onclick="MG.qual(\'' + co.id + '\')">Mejorar calidad</button></div></div>';
+      '<button class="btn ghost" onclick="MG.qual(\'' + co.id + '\')">Mejorar calidad</button></div>' +
+      (qPrev ? '<div class="sm amber">↳ a nivel ' + nextQ + ': share ~' + pct(qPrev.share) + ', ~' + fmtNum(qPrev.sellable) + ' u/sem</div>' : '<div class="sm muted">Calidad al máximo (subí el techo con I+D).</div>') + '</div>';
 
-    // marketing & I+D
+    // marketing & I+D (con previsualización de marketing)
     h += '<div class="card"><div class="ttl">Marketing & I+D (presupuesto semanal)</div>' +
-      '<div class="row"><span class="lbl">Marketing</span><input type="number" id="i_mkt" value="' + Math.round(co.marketingBudget) + '"><button class="btn" onclick="MG.mkt(\'' + co.id + '\')">OK</button></div>' +
+      '<div class="row"><span class="lbl">Marketing</span><input type="number" id="i_mkt" value="' + Math.round(co.marketingBudget) + '" oninput="MG.mktPrev(\'' + co.id + '\')"><button class="btn" onclick="MG.mkt(\'' + co.id + '\')">OK</button></div>' +
+      '<div class="sm amber" id="mktPrev">' + pricePrevHtml(E.previewMarketing(S, co.id, co.marketingBudget)) + '</div>' +
       '<div class="row"><span class="lbl">I+D</span><input type="number" id="i_rnd" value="' + Math.round(co.rndBudget) + '"><button class="btn" onclick="MG.rnd(\'' + co.id + '\')">OK</button></div>' +
       '<div class="sm muted">Marca: ' + pct(co.brandStrength) + ' · rendimientos decrecientes (duplicar gasto no duplica efecto).</div></div>';
 
@@ -371,8 +383,23 @@
         '<div class="sm ' + val + '">Valor fundamental ≈ ' + fmtFull(fund) + (s.price < fund * 0.97 ? ' · barata' : s.price > fund * 1.03 ? ' · cara' : ' · en precio') + '</div>' +
         '<div class="row"><input type="number" id="sh_' + s.ticker + '" placeholder="acciones" value="100">' +
         '<button class="btn pri" onclick="MG.buyStock(\'' + s.ticker + '\')">Comprar</button>' +
-        '<button class="btn ghost" onclick="MG.sellStock(\'' + s.ticker + '\')">Vender</button></div></div>';
+        '<button class="btn ghost" onclick="MG.sellStock(\'' + s.ticker + '\')">Vender</button>' +
+        '<button class="btn ghost" onclick="MG.shortStock(\'' + s.ticker + '\')">Corto</button></div></div>';
     }).join('');
+
+    // posiciones cortas abiertas
+    if (p.shorts && p.shorts.length) {
+      h += '<div class="card"><div class="ttl">Posiciones en corto</div>' +
+        '<div class="sm muted">Ganás si el precio baja. Pagás un fee de préstamo semanal; si el precio sube +60% sobre la entrada, margin call (liquidación forzada).</div>' +
+        p.shorts.map(function (sh) {
+          var st = S.stocks[sh.ticker]; if (!st) return '';
+          var pnl = (sh.entryPrice - st.price) * sh.shares; // ganancia si bajó
+          var callAt = sh.entryPrice * E.C.SHORT_MARGIN_CALL;
+          return '<div class="lrow"><div class="row"><b>' + esc(sh.ticker) + '</b><span class="' + (pnl >= 0 ? 'good' : 'bad') + ' sm">P&L ' + fmtUSD(pnl) + '</span></div>' +
+            '<div class="grid3 sm">' + mini('Acciones', fmtNum(sh.shares)) + mini('Entrada/Actual', fmtFull(sh.entryPrice) + ' / ' + fmtFull(st.price)) + mini('Margin call', fmtFull(callAt)) + '</div>' +
+            '<button class="btn pri" onclick="MG.cover(\'' + sh.id + '\')">Cerrar (recomprar)</button></div>';
+        }).join('') + '</div>';
+    }
 
     h += '<div class="card"><div class="ttl">Bienes raíces</div>' +
       '<div class="row"><span class="lbl">Región</span><select id="i_rereg">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
@@ -539,7 +566,9 @@
     backCo: function () { coView = null; render(); },
     setPrice: function (id) { act({ type: 'setPrice', companyId: id, price: num('i_price') }); },
     setProd: function (id) { act({ type: 'setProduction', companyId: id, target: num('i_prod') }); },
-    build: function (id) { act({ type: 'buildFactory', companyId: id }); },
+    build: function (id) { act({ type: 'buildFactory', companyId: id, region: (el('i_facreg') || {}).value }); },
+    facCostPrev: function (id) { var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return; var p = S.products[co.productId]; var b = el('buildBtn'); if (b) b.textContent = '+ Construir fábrica (' + fmtUSD(facCost(p, (el('i_facreg') || {}).value)) + ')'; },
+    mktPrev: function (id) { var v = num('i_mkt'); var d = el('mktPrev'); if (d) d.innerHTML = pricePrevHtml(E.previewMarketing(S, id, v)); },
     qual: function (id) { act({ type: 'investQuality', companyId: id }); },
     mkt: function (id) { act({ type: 'setMarketing', companyId: id, amount: num('i_mkt') }); },
     rnd: function (id) { act({ type: 'setRnd', companyId: id, amount: num('i_rnd') }); },
@@ -556,6 +585,8 @@
     refi: function (id) { act({ type: 'refinance', loanId: id }); },
     buyStock: function (tk) { act({ type: 'buyStock', ticker: tk, shares: num('sh_' + tk) }); },
     sellStock: function (tk) { act({ type: 'sellStock', ticker: tk, shares: num('sh_' + tk) }); },
+    shortStock: function (tk) { var r = act({ type: 'shortStock', ticker: tk, shares: num('sh_' + tk) }); if (r.ok) toast('Posición corta abierta. Recaudaste ' + fmtUSD(r.proceeds)); },
+    cover: function (id) { act({ type: 'coverStock', shortId: id }); },
     buyProp: function () { act({ type: 'buyProperty', region: el('i_rereg').value, propType: el('i_retype').value, mortgage: el('i_remort').checked }); },
     devProp: function (id) { act({ type: 'developProperty', propertyId: id }); },
     sellProp: function (id) { act({ type: 'sellProperty', propertyId: id }); },
