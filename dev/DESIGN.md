@@ -246,6 +246,14 @@ empuja arriba, vender abajo (solo el 25% del impacto queda permanente — el res
 es temporal, así no se infla netWorth comprando lo propio). Comisión 0.5%.
 Comprar y vender la misma acción en el mismo tick pierde (comisión+slippage).
 
+FUSIONES (acción `mergeCompanies`): combinás dos empresas PROPIAS del MISMO
+producto, ambas PRIVADAS (restricción de seguridad: el modelo es un producto por
+empresa y evita acciones públicas huérfanas). Se suman capacidad, dotación,
+inventario y presupuestos; sinergia de marca capeada (+0.05); costo de
+integración temporal (`_integrationTicks=6` → −30% de productividad efectiva unas
+semanas). El track record se revalúa desde cero. Cada empresa guarda
+`shareHistory[]` para el gráfico de cuota de mercado en el tiempo.
+
 SHORT-SELLING (`player.shorts[]`): vendés acciones prestadas (recibís proceeds,
 creás un pasivo = shares·precio en netWorth → no imprime patrimonio al abrir).
 Margen inicial 50%. Fee de préstamo `SHORT_BORROW=6%/año` por tick. **Margin

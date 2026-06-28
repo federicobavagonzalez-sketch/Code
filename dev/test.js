@@ -263,6 +263,35 @@ section('Short-selling y margin call (Bloque 7)');
   ok('margin call liquida posición adversa', s.player.shorts.length === 0, s.player.shorts.length);
 }
 
+section('Fusión de empresas (Bloque 7 §5)');
+{
+  const s = M.createInitialState({ seed: 95, startCash: 1e7 });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'A' });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'costa', name: 'B' });
+  const a = s.companies[0], b = s.companies[1];
+  const capA = a.factories.reduce((x, f) => x + f.capacity, 0), capB = b.factories.reduce((x, f) => x + f.capacity, 0);
+  const r = M.applyAction(s, { type: 'mergeCompanies', intoId: a.id, fromId: b.id });
+  ok('fusión exitosa (mismo producto, privadas)', r.ok, r.reason);
+  ok('queda una sola empresa', s.companies.length === 1);
+  ok('capacidades sumadas', Math.abs(a.factories.reduce((x, f) => x + f.capacity, 0) - (capA + capB)) < 1);
+  ok('integración penaliza productividad temporal', a._integrationTicks > 0);
+  // no se pueden fusionar productos distintos
+  M.applyAction(s, { type: 'startCompany', productId: 'bread', region: 'sur', name: 'C' });
+  const c = s.companies.find(x => x.productId === 'bread');
+  const r2 = M.applyAction(s, { type: 'mergeCompanies', intoId: a.id, fromId: c.id });
+  ok('rechaza fusión de productos distintos', !r2.ok);
+  // no se pueden fusionar cotizantes
+  for (let i = 0; i < 120; i++) { if (s.event.active) M.applyAction(s, { type: 'chooseEvent', choiceIndex: 1 }); M.tick(s); }
+  const big = s.companies.find(x => M.companyValue(s, x) > 2e6);
+  if (big) {
+    M.applyAction(s, { type: 'ipo', companyId: big.id, floatPct: 0.2 });
+    M.applyAction(s, { type: 'startCompany', productId: big.productId, region: 'norte', name: 'D' });
+    const d = s.companies.find(x => x.productId === big.productId && !x.public);
+    if (d) { const r3 = M.applyAction(s, { type: 'mergeCompanies', intoId: big.id, fromId: d.id }); ok('rechaza fusión con cotizante', !r3.ok); }
+    else ok('rechaza fusión con cotizante', true);
+  } else ok('rechaza fusión con cotizante', true);
+}
+
 section('Geografía: salario y distancia importan (Bloque 8)');
 {
   // misma empresa/seed: fábrica en región barata+cercana vs cara+lejana

@@ -111,6 +111,23 @@
     else if (active === 'id') html = viewID();
     v.innerHTML = html;
     if (active === 'dash') drawChart();
+    else if (active === 'mercado') drawShareCharts();
+  }
+  function drawShareCharts() {
+    var byPid = {};
+    S.companies.forEach(function (co) { (byPid[co.productId] = byPid[co.productId] || []).push(co); });
+    Object.keys(byPid).forEach(function (pid) {
+      var c = el('sc_' + pid); if (!c || !c.getContext) return;
+      var cos = byPid[pid];
+      var len = Math.min.apply(null, cos.map(function (co) { return (co.shareHistory || []).length; }));
+      var ctx = c.getContext('2d'), W = c.width, H = c.height; ctx.clearRect(0, 0, W, H);
+      if (len < 2) { ctx.fillStyle = '#6b6353'; ctx.font = '12px sans-serif'; ctx.fillText('(acumulando datos…)', 6, H / 2); return; }
+      var series = []; for (var i = 0; i < len; i++) { var sum = 0; cos.forEach(function (co) { var hh = co.shareHistory; sum += hh[hh.length - len + i] || 0; }); series.push(Math.min(1, sum)); }
+      ctx.strokeStyle = '#241b10'; ctx.beginPath(); ctx.moveTo(0, H - 2); ctx.lineTo(W, H - 2); ctx.stroke();
+      ctx.beginPath(); ctx.lineWidth = 1.8; ctx.strokeStyle = '#f59e0b';
+      for (var j = 0; j < series.length; j++) { var x = j / (series.length - 1) * (W - 4) + 2; var y = H - 3 - series[j] * (H - 8); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+      ctx.stroke();
+    });
   }
 
   // ------------------------------------------------------------------- DASHBOARD
@@ -276,10 +293,12 @@
       '</div></div>';
 
     // integración + corporativo
+    var mergeable = S.companies.filter(function (c) { return c.id !== co.id && c.productId === co.productId && !c.public; });
     h += '<div class="card"><div class="ttl">Estrategia corporativa</div>' +
       '<label class="chk"><input type="checkbox" ' + (co.vertical ? 'checked' : '') + ' onclick="MG.vert(\'' + co.id + '\',this.checked)"> Integración vertical (produce insumos −30% costo)</label>' +
       (co.public ? '<div class="sm good">Cotiza en bolsa (' + co.ticker + '), float ' + pct(co.floatPct) + '</div>'
-        : '<button class="btn ghost" onclick="MG.ipo(\'' + co.id + '\')">Salir a bolsa (IPO)</button>') +
+        : '<button class="btn ghost" onclick="MG.openIpo(\'' + co.id + '\')">Salir a bolsa (IPO)</button>') +
+      (!co.public && mergeable.length ? '<button class="btn ghost" onclick="MG.openMerge(\'' + co.id + '\')">Fusionar otra empresa de ' + esc(p.name) + ' acá</button>' : '') +
       '<button class="btn danger ghost" onclick="MG.sellco(\'' + co.id + '\')">Vender empresa</button></div>';
     return h;
   }
@@ -305,11 +324,13 @@
       S.companies.forEach(function (co) { if (co.productId === pid) sellers.push({ name: co.name + ' (vos)', price: co.price, share: co.marketShare, you: true }); });
       S.competitors.forEach(function (c) { if (c.productId === pid && !c.dead) sellers.push({ name: c.name, price: c.price, share: c.marketShare, you: false }); });
       sellers.sort(function (a, b) { return b.share - a.share; });
+      var youHere = sellers.some(function (s) { return s.you; });
       h += '<div class="card"><div class="row"><b>' + esc(p.name) + '</b><span class="chip">ref ' + fmtFull(mk.referencePrice) + '</span></div>' +
         sellers.slice(0, 6).map(function (s) {
           return '<div class="srow"><span class="' + (s.you ? 'amber' : '') + '">' + esc(s.name) + '</span>' +
             '<span class="sm muted">' + fmtFull(s.price) + '</span><span class="bar mini-bar"><div style="width:' + (s.share * 100).toFixed(0) + '%"></div></span><span class="sm">' + pct(s.share) + '</span></div>';
-        }).join('') + '</div>';
+        }).join('') +
+        (youHere ? '<div class="sm muted" style="margin-top:6px">Tu cuota de mercado en el tiempo</div><canvas id="sc_' + pid + '" width="480" height="56"></canvas>' : '') + '</div>';
     });
     // M&A
     h += '<div class="card"><div class="ttl">Adquisiciones (M&A)</div><div class="sm muted">Comprá competidores: valor + prima de control ' + pct(E.C.CONTROL_PREMIUM) + '.</div></div>';
@@ -490,6 +511,44 @@
     if (r.ok) { closeModal(); active = 'empresas'; coView = r.id; render(); }
   }
 
+  // IPO con previsualización del monto recaudado
+  function openIpo(id) {
+    var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return;
+    var val = E.companyValue(S, co);
+    if (val < 2e6) { toast('La empresa es muy chica para una IPO (valor mínimo $2M). Valor actual: ' + fmtUSD(val)); return; }
+    modal('Salir a bolsa (IPO) — ' + esc(co.name),
+      '<div class="sm muted">Valor estimado: <b>' + fmtUSD(val) + '</b>. Elegí qué % flotar al público; cedés ese % de control y dividendos futuros.</div>' +
+      '<div class="row"><span class="lbl">Float</span><select id="ipo_float" onchange="MG.ipoPrev(\'' + id + '\')">' + [10, 20, 30, 40, 49].map(function (f) { return '<option value="' + (f / 100) + '"' + (f === 30 ? ' selected' : '') + '>' + f + '%</option>'; }).join('') + '</select></div>' +
+      '<div class="sm amber" id="ipoPrev"></div>', 'Confirmar IPO', 'MG.doIpo(\'' + id + '\')');
+    ipoPrev(id);
+  }
+  function ipoPrev(id) {
+    var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return;
+    var f = parseFloat(el('ipo_float').value), raised = f * E.companyValue(S, co) * 0.95;
+    var d = el('ipoPrev'); if (d) d.innerHTML = 'Recaudación estimada (neto de fees 5%): <b>' + fmtUSD(raised) + '</b>';
+  }
+  function doIpo(id) { var f = parseFloat(el('ipo_float').value); var r = act({ type: 'ipo', companyId: id, floatPct: f }); if (r.ok) { closeModal(); toast('IPO: recaudaste ' + fmtUSD(r.raised)); } }
+
+  // fusión de empresas
+  function openMerge(id) {
+    var co = S.companies.find(function (c) { return c.id === id; }); if (!co) return;
+    var cand = S.companies.filter(function (c) { return c.id !== id && c.productId === co.productId && !c.public; });
+    if (!cand.length) { toast('No hay empresas elegibles (mismo producto, privadas).'); return; }
+    modal('Fusionar dentro de ' + esc(co.name),
+      '<div class="sm muted">Se absorbe otra empresa del mismo producto (ambas privadas): se suman capacidad, dotación e inventario, con sinergia de marca capeada y un costo de integración temporal (productividad reducida ~6 semanas).</div>' +
+      '<div class="row"><span class="lbl">Absorber</span><select id="merge_from">' + cand.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + ' — cap ' + fmtNum(c.factories.reduce(function (s, f) { return s + f.capacity; }, 0)) + ', valor ' + fmtUSD(E.companyValue(S, c)) + '</option>'; }).join('') + '</select></div>',
+      'Fusionar', 'MG.doMerge(\'' + id + '\')');
+  }
+  function doMerge(id) { var r = act({ type: 'mergeCompanies', intoId: id, fromId: el('merge_from').value }); if (r.ok) { closeModal(); toast('Empresas fusionadas.'); } }
+
+  // refinanciación con previsualización de la nueva tasa
+  function refiPreview(id) {
+    var l = S.player.loans.find(function (x) { return x.id === id; }); if (!l) return;
+    var nr = E.loanRateFor(S, l.type);
+    if (nr >= l.annualRate - 0.002) { toast('Tu score no mejora la tasa todavía (vigente ' + (l.annualRate * 100).toFixed(1) + '%).'); return; }
+    if (confirm('Refinanciar: ' + (l.annualRate * 100).toFixed(1) + '% → ' + (nr * 100).toFixed(1) + '% anual.\nCuenta como una consulta de crédito. ¿Confirmar?')) act({ type: 'refinance', loanId: id });
+  }
+
   // ----------------------------------------------------------------------- MODALES
   function modal(title, body, okLabel, okFn) {
     el('modalBox').innerHTML = '<div class="mhead">' + esc(title) + '</div><div class="mbody">' + body + '</div>' +
@@ -577,12 +636,13 @@
     fire: function (id, n) { act({ type: 'fire', companyId: id, n: n }); },
     train: function (id) { act({ type: 'train', companyId: id }); },
     vert: function (id, on) { act({ type: 'setVertical', companyId: id, on: on }); },
-    ipo: function (id) { var r = act({ type: 'ipo', companyId: id, floatPct: 0.3 }); if (r.ok) toast('IPO: recaudaste ' + fmtUSD(r.raised)); },
+    openIpo: openIpo, ipoPrev: ipoPrev, doIpo: doIpo,
+    openMerge: openMerge, doMerge: doMerge,
     sellco: function (id) { if (confirm('¿Vender esta empresa?')) { act({ type: 'sellCompany', companyId: id }); coView = null; render(); } },
     acquire: function (id) { act({ type: 'acquire', competitorId: id }); },
     takeLoan: function () { act({ type: 'takeLoan', amount: num('i_loan'), loanType: el('i_ltype').value, termTicks: parseInt(el('i_lterm').value, 10) }); },
     payLoan: function (id, amt) { act({ type: 'payLoanExtra', loanId: id, amount: amt }); },
-    refi: function (id) { act({ type: 'refinance', loanId: id }); },
+    refi: refiPreview,
     buyStock: function (tk) { act({ type: 'buyStock', ticker: tk, shares: num('sh_' + tk) }); },
     sellStock: function (tk) { act({ type: 'sellStock', ticker: tk, shares: num('sh_' + tk) }); },
     shortStock: function (tk) { var r = act({ type: 'shortStock', ticker: tk, shares: num('sh_' + tk) }); if (r.ok) toast('Posición corta abierta. Recaudaste ' + fmtUSD(r.proceeds)); },

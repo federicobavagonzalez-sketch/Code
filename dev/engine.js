@@ -510,7 +510,9 @@
     const req = Math.max(cap / C.STAFF_PER_CAP, 0.0001);
     const staffRatio = clamp(e.count / req, 0, 1.2);
     const laborFactor = Math.min(staffRatio, 1) * (0.5 + 0.5 * e.avgSkill) * (0.6 + 0.4 * e.morale);
-    return cap * laborFactor;
+    let f = cap * laborFactor;
+    if (co._integrationTicks > 0) f *= 0.7; // costo de integración: productividad reducida unas semanas
+    return f;
   }
   function stepProduction(state, resolved) {
     const m = state.macro;
@@ -572,6 +574,7 @@
       co.profitHistory.push(co.cashContribution);
       if (co.profitHistory.length > 60) co.profitHistory.shift();
       co._revenueThisTick = 0;
+      if (co._integrationTicks > 0) co._integrationTicks--;
     }
   }
 
@@ -852,6 +855,12 @@
   // 11 -------------------------------------------------------------- CIERRE
   function stepClose(state) {
     recomputeNetWorth(state);
+    // historial de cuota de mercado por empresa (para gráficos de competencia)
+    for (const co of state.companies) {
+      if (!co.shareHistory) co.shareHistory = [];
+      co.shareHistory.push(+(co.marketShare || 0).toFixed(4));
+      if (co.shareHistory.length > 120) co.shareHistory.shift();
+    }
     checkMilestones(state);
     // bancarrota: insolvente N ticks consecutivos
     const insolvent = state.player.netWorth < -C.INSOLVENCY_THRESHOLD && state.player.cash < 0;
@@ -907,7 +916,7 @@
           marketingBudget: 0, rndBudget: 0, brandStrength: 0.08, fresh: 1, vertical: !!A.vertical,
           employees: { count: Math.max(3, Math.round(cap / C.STAFF_PER_CAP)), avgSkill: 0.5, avgWage: C.BASE_WAGE * region.wageLevel, morale: 0.7 },
           cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: 0, profitHistory: [], lastUnitCost: 0,
-          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0,
+          public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 0, shareHistory: [],
         };
         state.companies.push(co);
         pushLog(state, 'Fundaste ' + co.name + ' en ' + region.name + ' (costo USD ' + Math.round(setupCost).toLocaleString('en') + ').', 'good');
@@ -982,6 +991,34 @@
       case 'setVertical': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
         co.vertical = !!A.on; return { ok: true };
+      }
+      case 'mergeCompanies': {
+        const a = findCo(state, A.intoId), b = findCo(state, A.fromId);
+        if (!a || !b) return bad('Empresa no encontrada');
+        if (a.id === b.id) return bad('Elegí dos empresas distintas.');
+        if (a.productId !== b.productId) return bad('Solo se pueden fusionar empresas del mismo producto.');
+        if (a.public || b.public) return bad('No se pueden fusionar empresas que cotizan en bolsa.');
+        const capA = a.factories.reduce((s, f) => s + f.capacity, 0), capB = b.factories.reduce((s, f) => s + f.capacity, 0);
+        const totCap = (capA + capB) || 1;
+        const totCount = Math.max(1, a.employees.count + b.employees.count);
+        a.qualityLevel = (a.qualityLevel * capA + b.qualityLevel * capB) / totCap;
+        a.qualityCeiling = Math.max(a.qualityCeiling, b.qualityCeiling);
+        a.brandStrength = clamp(Math.max(a.brandStrength, b.brandStrength) + 0.05, 0, 1); // sinergia capeada
+        a.employees.avgSkill = (a.employees.avgSkill * a.employees.count + b.employees.avgSkill * b.employees.count) / totCount;
+        a.employees.morale = clamp((a.employees.morale * a.employees.count + b.employees.morale * b.employees.count) / totCount - 0.1, 0.05, 1);
+        a.employees.count += b.employees.count;
+        a.inventory += b.inventory;
+        a.productionTarget += b.productionTarget;
+        a.marketingBudget += b.marketingBudget;
+        a.rndBudget += b.rndBudget;
+        a.factories = a.factories.concat(b.factories);
+        a.profitHistory = []; a.shareHistory = a.shareHistory || [];
+        a._integrationTicks = 6; // productividad reducida unas semanas (costo de integración)
+        state.companies = state.companies.filter(c => c.id !== b.id);
+        pushLog(state, 'Fusionaste ' + b.name + ' dentro de ' + a.name + '. Integración en curso: productividad reducida unas semanas.', 'good');
+        awardMilestone(state, 'firstMerge', 'Primera fusión de empresas.');
+        recomputeNetWorth(state);
+        return { ok: true };
       }
       case 'sellCompany': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
@@ -1215,7 +1252,7 @@
       marketingBudget: c.marketingBudget, rndBudget: c.rndBudget, brandStrength: c.brandStrength, fresh: c.fresh, vertical: false,
       employees: { count: Math.max(3, Math.round(c.capacity / C.STAFF_PER_CAP)), avgSkill: 0.55, avgWage: C.BASE_WAGE, morale: 0.55 },
       cashContribution: 0, lastUnitsSold: 0, lastRevenue: 0, marketShare: c.marketShare, profitHistory: [], lastUnitCost: 0,
-      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6,
+      public: false, ticker: null, floatPct: 0, _revenueThisTick: 0, _integrationTicks: 6, shareHistory: [],
     };
     state.companies.push(co);
     c.dead = true;
