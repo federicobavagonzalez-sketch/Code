@@ -454,6 +454,117 @@ section('Poder de mercado y monopolio (Bloque 4)');
   ok('el monopolista sostiene sobreprecio mejor que el chico', pvDom.share > pvSmall.share, [pvSmall.share.toFixed(4), pvDom.share.toFixed(4)]);
 }
 
+
+// ---------------------------------------------------------- V2 BLOQUE 5/6/7
+section('Inmobiliaria v2: fases de obra y tipos (Bloque 5)');
+{
+  const s = M.createInitialState({ seed: 500, startCash: 1e8 });
+  const r = M.applyAction(s, { type: 'buyProperty', region: 'TX', propType: 'apartment' });
+  ok('proyecto arranca en obra', r.ok && s.realEstate[0].phase === 'building', s.realEstate[0].phase);
+  const pr = s.realEstate[0];
+  // vender en obra pierde
+  const c0 = s.player.cash;
+  const s2 = JSON.parse(JSON.stringify(s));
+  M.applyAction(s2, { type: 'sellProperty', propertyId: s2.realEstate[0].id });
+  ok('vender a medio construir pierde plata', s2.player.cash < c0 + pr.capitalInvested, [fmt(c0), fmt(s2.player.cash)]);
+  // terminada genera renta y vale mas que el capital
+  run(s, 20, () => 0);
+  ok('obra terminada pasa a operacion', pr.phase === 'operating', pr.phase);
+  ok('desarrollo agrega valor (val > capital)', pr.currentValue > pr.capitalInvested, [fmt(pr.capitalInvested), fmt(pr.currentValue)]);
+  ok('en operacion genera renta', pr.rentPerTick > 0);
+  // megaproyecto eleva la zona
+  const s3 = M.createInitialState({ seed: 501, startCash: 1e9 });
+  const land0 = s3.regions.find(x => x.id === 'AZ').landPrice0;
+  M.applyAction(s3, { type: 'buyProperty', region: 'AZ', propType: 'mixeduse' });
+  run(s3, 95, () => 0);
+  ok('megaproyecto revaloriza la zona', s3.regions.find(x => x.id === 'AZ').landPrice0 > land0);
+}
+
+section('Club de futbol (Bloque 6)');
+{
+  // comprar club y jugar temporadas con inversion → asciende; TV multiplica al subir
+  const s = M.createInitialState({ seed: 600, startCash: 3e7 });
+  const r = M.applyAction(s, { type: 'buyClub', name: 'Atletico Prueba' });
+  ok('comprar club OK', r.ok, r.reason);
+  const f = s.football;
+  const tvDiv5 = M.FB.TV[5], tvDiv4 = M.FB.TV[4];
+  ok('la TV de div 4 paga mucho mas que div 5', tvDiv4 >= tvDiv5 * 3);
+  // invertir fuerte: DT bueno, instalaciones, fichar a los mejores del mercado en cada ventana
+  M.applyAction(s, { type: 'fbCoach', tier: 0.8 });
+  M.applyAction(s, { type: 'fbFacilities' }); M.applyAction(s, { type: 'fbFacilities' });
+  M.applyAction(s, { type: 'fbAcademy' });
+  let promoted = false;
+  for (let i = 0; i < M.FB.SEASON * 6 && !s.gameOver; i++) {
+    if (M.fbWindowOpen(f) && f.market.length && s.player.cash > 2e6) {
+      const best = f.market.slice().sort((a, b) => b.ability - a.ability)[0];
+      if (best && best.ability > f.strength * 0.95) M.applyAction(s, { type: 'fbBuyPlayer', playerId: best.id });
+    }
+    run(s, 1, () => 0);
+    if (f.division < 5) { promoted = true; break; }
+  }
+  ok('club con inversion asciende en pocas temporadas', promoted, 'division=' + f.division + ' temporada=' + f.seasonNum);
+  ok('fuerza deportiva refleja la inversion', f.strength > (M.FB.ABILITY[5][0] + M.FB.ABILITY[5][1]) / 2, f.strength);
+
+  // club mal gestionado: vender el plantel hasta el minimo destruye la fuerza
+  const sBad = M.createInitialState({ seed: 601, startCash: 5e6 });
+  M.applyAction(sBad, { type: 'buyClub' });
+  const fb = sBad.football;
+  const str0 = M.fbTeamStrength(fb);
+  let sold = 0;
+  while (fb.players.length > 12) { const star = fb.players.slice().sort((a, b) => b.ability - a.ability)[0]; if (M.applyAction(sBad, { type: 'fbSellPlayer', playerId: star.id }).ok) sold++; else break; }
+  ok('vender estrellas da caja pero hunde la fuerza', sold >= 3 && M.fbTeamStrength(fb) < str0 * 0.92, [str0.toFixed(1), M.fbTeamStrength(fb).toFixed(1)]);
+
+  // no hay loop: comprar (1.25x) y vender (0.9x) al toque pierde
+  const sL = M.createInitialState({ seed: 602, startCash: 3e7 });
+  M.applyAction(sL, { type: 'buyClub' });
+  const fL = sL.football; const cash0 = sL.player.cash;
+  const m0 = fL.market[0];
+  M.applyAction(sL, { type: 'fbBuyPlayer', playerId: m0.id });
+  M.applyAction(sL, { type: 'fbSellPlayer', playerId: m0.id });
+  ok('comprar y vender jugador al toque pierde (fee 1.25x vs venta 0.9x)', sL.player.cash < cash0, [fmt(cash0), fmt(sL.player.cash)]);
+  // reproducibilidad
+  const A1 = M.createInitialState({ seed: 603, startCash: 1e7 }); M.applyAction(A1, { type: 'buyClub' }); run(A1, 100, () => 0);
+  const A2 = M.createInitialState({ seed: 603, startCash: 1e7 }); M.applyAction(A2, { type: 'buyClub' }); run(A2, 100, () => 0);
+  ok('temporadas reproducibles por seed', A1.football.pts === A2.football.pts && A1.player.netWorth === A2.player.netWorth);
+}
+
+section('Naciones (Bloque 7)');
+{
+  const s = M.createInitialState({ seed: 700, startCash: 1e9 });
+  const poor = s.nations.find(n => n.id === 'ner'), rich = s.nations.find(n => n.id === 'nor');
+  const d0poor = poor.development, d0rich = rich.development;
+  M.applyAction(s, { type: 'donate', countryId: 'ner', area: 'salud', amount: 5e7 });
+  M.applyAction(s, { type: 'donate', countryId: 'nor', area: 'salud', amount: 5e7 });
+  run(s, 120, () => 0);
+  ok('donar a pais pobre mueve mas la aguja que a uno rico', (poor.development - d0poor) > (rich.development - d0rich), [poor.development - d0poor, rich.development - d0rich]);
+  // rendimientos decrecientes: segunda donacion igual rinde menos
+  const h1 = poor._pendH || 0;
+  M.applyAction(s, { type: 'donate', countryId: 'ner', area: 'salud', amount: 5e7 });
+  const gain2 = (poor._pendH || 0) - h1;
+  M.applyAction(s, { type: 'donate', countryId: 'ner', area: 'salud', amount: 5e7 });
+  const gain3 = (poor._pendH || 0) - h1 - gain2;
+  ok('donaciones con rendimientos decrecientes', gain3 < gain2, [gain2.toFixed(2), gain3.toFixed(2)]);
+  // es sumidero real
+  ok('donar es sumidero (cash baja, no vuelve)', s.player.philanthropy > 0 && s.player.cash < 1e9);
+}
+
+section('Eventos no intrusivos (Bloque 7)');
+{
+  const s = M.createInitialState({ seed: 710, startCash: 1e6 });
+  // el tiempo NO se pausa con eventos pendientes
+  let sawPending = false;
+  for (let i = 0; i < 120; i++) { M.tick(s); if (s.pendingEvents.length > 0) sawPending = true; }
+  ok('los eventos se encolan sin pausar el tick', sawPending && s.tick === 120, 'tick=' + s.tick + ' pendientes=' + s.pendingEvents.length);
+  ok('la bandeja se acota (max 4)', s.pendingEvents.length <= 4, s.pendingEvents.length);
+  // resolver por uid
+  if (s.pendingEvents.length) {
+    const ev = s.pendingEvents[0];
+    const n0 = s.pendingEvents.length;
+    const r = M.applyAction(s, { type: 'chooseEvent', eventUid: ev.uid, choiceIndex: 0 });
+    ok('resolver evento por uid funciona', r.ok && s.pendingEvents.length === n0 - 1);
+  } else ok('resolver evento por uid funciona', true);
+}
+
 console.log('\n========================================');
 console.log('RESULTADO: ' + PASS + ' PASS, ' + FAIL + ' FAIL');
 console.log('========================================');

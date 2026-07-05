@@ -140,6 +140,7 @@ const HTML = `<!DOCTYPE html>
       <div class="hrow">
         <span class="hdate" id="hDate">—</span>
         <span class="chip warn" id="hPhase">—</span>
+        <span class="chip warn" id="hBell" style="display:none;cursor:pointer" onclick="MG.go(&quot;dash&quot;)">🔔 <span id="hBellN">0</span></span>
         <div id="speed">
           <button class="sbtn" data-sp="0" onclick="MG.setSpeed(0)">⏸</button>
           <button class="sbtn" data-sp="1" onclick="MG.setSpeed(1)">▶</button>
@@ -161,7 +162,7 @@ const HTML = `<!DOCTYPE html>
       <div class="navit" data-tab="mercado" onclick="MG.go('mercado')"><span class="ic">⚔</span>Mercado</div>
       <div class="navit" data-tab="finanzas" onclick="MG.go('finanzas')"><span class="ic">🏦</span>Finanzas</div>
       <div class="navit" data-tab="inversiones" onclick="MG.go('inversiones')"><span class="ic">📈</span>Inversión</div>
-      <div class="navit" data-tab="id" onclick="MG.go('id')"><span class="ic">⚗</span>I+D</div>
+      <div class="navit" data-tab="mas" onclick="MG.go('mas')"><span class="ic">☰</span>Más</div>
     </div>
   </div>
 

@@ -131,6 +131,7 @@ textarea{width:100%;resize:vertical}
       <div class="hrow">
         <span class="hdate" id="hDate">—</span>
         <span class="chip warn" id="hPhase">—</span>
+        <span class="chip warn" id="hBell" style="display:none;cursor:pointer" onclick="MG.go(&quot;dash&quot;)">🔔 <span id="hBellN">0</span></span>
         <div id="speed">
           <button class="sbtn" data-sp="0" onclick="MG.setSpeed(0)">⏸</button>
           <button class="sbtn" data-sp="1" onclick="MG.setSpeed(1)">▶</button>
@@ -152,7 +153,7 @@ textarea{width:100%;resize:vertical}
       <div class="navit" data-tab="mercado" onclick="MG.go('mercado')"><span class="ic">⚔</span>Mercado</div>
       <div class="navit" data-tab="finanzas" onclick="MG.go('finanzas')"><span class="ic">🏦</span>Finanzas</div>
       <div class="navit" data-tab="inversiones" onclick="MG.go('inversiones')"><span class="ic">📈</span>Inversión</div>
-      <div class="navit" data-tab="id" onclick="MG.go('id')"><span class="ic">⚗</span>I+D</div>
+      <div class="navit" data-tab="mas" onclick="MG.go('mas')"><span class="ic">☰</span>Más</div>
     </div>
   </div>
 
@@ -292,6 +293,28 @@ textarea{width:100%;resize:vertical}
     ];
   }
 
+  // ------------------------------------------------------- PROYECTOS INMOBILIARIOS
+  // base = costo de referencia; build = ticks de obra; rentY = renta anual % del valor;
+  // cyc = sensibilidad al ciclo macro; boost = eleva el landPrice0 del estado al completarse (megaproyectos)
+  const RE_TYPES = {
+    house:      { name: 'Casa / duplex',            base: 250000, build: 6,   rentY: 0.085, cat: 'residential', cyc: 0.8 },
+    apartment:  { name: 'Edificio de departamentos',base: 2.5e6,  build: 16,  rentY: 0.095, cat: 'residential', cyc: 0.9 },
+    complex:    { name: 'Complejo residencial',     base: 12e6,   build: 30,  rentY: 0.10,  cat: 'residential', cyc: 1.0 },
+    luxtower:   { name: 'Rascacielos de lujo',      base: 60e6,   build: 52,  rentY: 0.11,  cat: 'residential', cyc: 1.5 },
+    shop:       { name: 'Local comercial',          base: 400000, build: 8,   rentY: 0.095, cat: 'commercial',  cyc: 1.0 },
+    stripmall:  { name: 'Strip mall',               base: 3e6,    build: 20,  rentY: 0.105, cat: 'commercial',  cyc: 1.1 },
+    mall:       { name: 'Shopping mall',            base: 40e6,   build: 60,  rentY: 0.12,  cat: 'commercial',  cyc: 1.4 },
+    office:     { name: 'Torre de oficinas',        base: 35e6,   build: 50,  rentY: 0.105, cat: 'commercial',  cyc: 1.7 },
+    warehouse:  { name: 'Galpon logistico',         base: 1.2e6,  build: 10,  rentY: 0.095, cat: 'industrial',  cyc: 0.9 },
+    indpark:    { name: 'Parque industrial',        base: 15e6,   build: 36,  rentY: 0.105, cat: 'industrial',  cyc: 1.0 },
+    fulfillment:{ name: 'Centro de distribucion',   base: 25e6,   build: 40,  rentY: 0.115, cat: 'industrial',  cyc: 1.1 },
+    hotel:      { name: 'Hotel boutique',           base: 8e6,    build: 26,  rentY: 0.12,  cat: 'hospitality', cyc: 1.8 },
+    resort:     { name: 'Resort turistico',         base: 50e6,   build: 70,  rentY: 0.14,  cat: 'hospitality', cyc: 2.2 },
+    mixeduse:   { name: 'Megaproyecto de uso mixto',base: 150e6,  build: 90,  rentY: 0.125, cat: 'mega',        cyc: 1.3, boost: 0.05 },
+    district:   { name: 'Urbanizacion planificada', base: 400e6,  build: 120, rentY: 0.135, cat: 'mega',        cyc: 1.4, boost: 0.12 },
+  };
+  const RE_ALIAS = { residential: 'house', commercial: 'shop', industrial: 'warehouse', land: 'house' };
+
   // ---------------------------------------------------------------------- PRNG
   function rngNext(state) {
     let s = state.rng >>> 0;
@@ -404,7 +427,7 @@ textarea{width:100%;resize:vertical}
         stockIndex: 1000, reIndex: 1.0, fuelIndex: 1.0,
       },
       tech: { unlocked: [], project: null, points: 0, effBonus: 0, ceilingBonus: 0, laborBonus: 0, fixedPenalty: 0, mktBonus: 0, logiBonus: 0, leadCut: 0, freshBonus: 0, patent: false, riskCut: 0 },
-      event: { active: null, cooldown: 4 },
+      event: { active: null, cooldown: 4 }, pendingEvents: [], football: null, nations: buildNations(),
       milestones: {}, history: [], log: [], techTree: buildTech(),
       _quarterProfit: 0,
     };
@@ -539,6 +562,7 @@ textarea{width:100%;resize:vertical}
     for (const t in pl.stocks) { const s = state.stocks[t]; if (s) nw += pl.stocks[t] * s.price; }
     for (const sh of pl.shorts) { const s = state.stocks[sh.ticker]; if (s) nw -= sh.shares * s.price; } // pasivo: acciones que debés
     for (const pr of state.realEstate) nw += pr.currentValue;
+    if (state.football) nw += footballValue(state.football);
     for (const co of state.companies) nw += co.inventory * state.products[co.productId].baseVarCost * state.macro.inflationIndex;
     nw -= totalDebt(state);
     pl.netWorth = fin(nw, 0);
@@ -562,7 +586,6 @@ textarea{width:100%;resize:vertical}
   // ============================================================= TICK
   function tick(state) {
     if (state.gameOver) return state;
-    if (state.event.active) return state; // tiempo pausado hasta resolver evento
     state.tick++;
     state._quarterProfit = 0;
 
@@ -576,6 +599,8 @@ textarea{width:100%;resize:vertical}
     stepCapitalMarkets(state);         // 8
     stepCredit(state);                 // 9
     maybeEvent(state);                 // 10
+    stepFootball(state);               // 10b (club de futbol)
+    if (state.tick % 4 === 0) stepNations(state); // 10c (naciones, cada 4 ticks)
     stepClose(state);                  // 11
     return state;
   }
@@ -1028,17 +1053,32 @@ textarea{width:100%;resize:vertical}
       const target = raw / C.STOCK_INIT_PRICE * 1000; // rebase a 1000
       state.macro.stockIndex = state.macro.stockIndex * 0.85 + target * 0.15;
     }
-    // inmuebles: valor sigue landPrice regional; ocupación por oferta/demanda
-    const typeCount = {};
-    for (const pr of state.realEstate) typeCount[pr.region + '|' + pr.type] = (typeCount[pr.region + '|' + pr.type] || 0) + 1;
+    // inmuebles: fases de obra; valor sigue landPrice + inflacion + ciclo; ocupacion por oferta/demanda de la categoria
+    const catCount = {};
+    for (const pr of state.realEstate) { const cat = pr.cat || 'residential'; catCount[pr.region + '|' + cat] = (catCount[pr.region + '|' + cat] || 0) + 1; }
     for (const pr of state.realEstate) {
       const r = state.regions.find(x => x.id === pr.region);
+      const T = RE_TYPES[pr.type] || RE_TYPES[RE_ALIAS[pr.type] || 'house'];
+      if (pr.phase === 'building') {
+        pr.buildTicksRemaining = Math.max(0, (pr.buildTicksRemaining || 0) - 1);
+        pr.currentValue = (pr.capitalInvested || pr.purchasePrice) * 0.85; // obra a medio terminar vale menos
+        pr.rentPerTick = 0; pr.occupancy = 0;
+        if (pr.buildTicksRemaining <= 0) {
+          pr.phase = 'operating'; pr.occupancy = 0.75;
+          if (T.boost && r) { r.landPrice0 *= (1 + T.boost); pushLog(state, 'Megaproyecto terminado en ' + r.name + ': la zona se revaloriza.', 'good'); }
+          pushLog(state, 'Obra terminada: ' + T.name + ' en ' + (r ? r.name : pr.region) + ' ya genera renta.', 'good');
+        }
+        continue;
+      }
       const inflMul = state.macro.inflationIndex / (pr.inflAtBuy || 1);
-      pr.currentValue = pr.purchasePrice * (r.landPrice / pr.landPriceAtBuy) * inflMul * (1 + pr.developmentLevel * 0.35);
-      const demandUnits = r.population / 1e6 * r.wealthIndex * (pr.type === 'industrial' ? 0.6 : pr.type === 'commercial' ? 0.9 : 1.2);
-      const supplyUnits = (typeCount[pr.region + '|' + pr.type] || 1);
-      pr.occupancy = clamp(0.7 + 0.3 * (demandUnits / supplyUnits - 1) * 0.3, 0.3, 1);
-      pr.rentPerTick = pr.currentValue * 0.00175 * (1 + pr.developmentLevel * 0.25);
+      const cycMul = 1 + (T.cyc || 1) * 0.12 * state.macro.cyclePhase;
+      // valor: obra terminada vale ~25% mas que el capital + drift regional
+      pr.currentValue = (pr.capitalInvested || pr.purchasePrice) * 1.25 * (r ? r.landPrice / pr.landPriceAtBuy : 1) * inflMul * cycMul * (1 + pr.developmentLevel * 0.3);
+      const cat = pr.cat || 'residential';
+      const demandUnits = (r ? r.population / 1e6 * r.wealthIndex : 5) * (cat === 'industrial' ? 0.6 : cat === 'commercial' ? 0.9 : cat === 'hospitality' ? 0.5 : cat === 'mega' ? 0.8 : 1.2);
+      const supplyUnits = (catCount[pr.region + '|' + cat] || 1);
+      pr.occupancy = clamp((0.72 + 0.3 * (demandUnits / supplyUnits - 1) * 0.3) * (1 + 0.15 * state.macro.cyclePhase * (T.cyc || 1) * 0.5), 0.25, 1);
+      pr.rentPerTick = pr.currentValue * (T.rentY || 0.095) / 52 * (1 + pr.developmentLevel * 0.2);
     }
     // ventas en corto: fee de préstamo de acciones por tick + margin call si el precio sube fuerte
     const pl = state.player;
@@ -1080,11 +1120,15 @@ textarea{width:100%;resize:vertical}
 
   // 10 -------------------------------------------------------------- EVENTOS
   function maybeEvent(state) {
-    if (state.event.cooldown > 0) { state.event.cooldown--; return; }
-    if (rngNext(state) < C.EVENT_BASE_PROB) {
+    if (!state.pendingEvents) state.pendingEvents = [];
+    if (state.event.cooldown > 0) { state.event.cooldown--; }
+    else if (state.pendingEvents.length < 4 && rngNext(state) < C.EVENT_BASE_PROB) {
       const ev = rollEvent(state);
-      if (ev) { state.event.active = ev; state.event.cooldown = C.EVENT_COOLDOWN; }
+      if (ev) { ev.uid = uid('ev'); ev.tick = state.tick; state.pendingEvents.push(ev); state.event.cooldown = C.EVENT_COOLDOWN;
+        pushLog(state, 'Nueva decisión pendiente: ' + ev.title + '.', 'warn'); }
     }
+    // espejo para compatibilidad: el "activo" es el primero de la bandeja
+    state.event.active = state.pendingEvents[0] || null;
   }
 
   // 11 -------------------------------------------------------------- CIERRE
@@ -1450,9 +1494,9 @@ textarea{width:100%;resize:vertical}
       }
       case 'buyProperty': {
         const r = state.regions.find(x => x.id === A.region) || state.regions[0];
-        const type = A.propType || 'residential';
-        const base = { residential: 250000, commercial: 600000, industrial: 400000, land: 120000 }[type] || 250000;
-        const price = base * r.landPrice * state.macro.reIndex;
+        const typeId = RE_TYPES[A.propType] ? A.propType : (RE_ALIAS[A.propType] || 'house');
+        const T = RE_TYPES[typeId];
+        const price = T.base * r.landPrice * state.macro.reIndex;
         const useMortgage = !!A.mortgage;
         let down = price, loan = null;
         if (useMortgage) {
@@ -1466,12 +1510,13 @@ textarea{width:100%;resize:vertical}
         pl.cash -= down;
         if (loan) { pl.loans.push(loan); pl.inquiries.push(state.tick); }
         const pr = {
-          id: uid('prop'), region: r.id, type, purchasePrice: price, currentValue: price,
-          rentPerTick: price * 0.00175, occupancy: 0.85, maintenancePerTick: price * 0.00025,
+          id: uid('prop'), region: r.id, type: typeId, cat: T.cat, purchasePrice: price, currentValue: price * 0.85,
+          phase: 'building', buildTicksRemaining: T.build, capitalInvested: price,
+          rentPerTick: 0, occupancy: 0, maintenancePerTick: price * 0.0002,
           mortgageLoanId: loan ? loan.id : null, developmentLevel: 0, landPriceAtBuy: r.landPrice, inflAtBuy: state.macro.inflationIndex,
         };
         state.realEstate.push(pr);
-        pushLog(state, 'Compraste inmueble ' + type + ' en ' + r.name + (loan ? ' con hipoteca' : '') + '.', 'info');
+        pushLog(state, 'Iniciaste obra: ' + T.name + ' en ' + r.name + (loan ? ' (con hipoteca)' : '') + '. ' + T.build + ' semanas de construccion.', 'info');
         recomputeNetWorth(state);
         return { ok: true, id: pr.id };
       }
@@ -1486,7 +1531,7 @@ textarea{width:100%;resize:vertical}
       }
       case 'sellProperty': {
         const pr = state.realEstate.find(x => x.id === A.propertyId); if (!pr) return bad('Propiedad no encontrada');
-        let net = pr.currentValue * 0.97;
+        let net = pr.phase === 'building' ? (pr.capitalInvested || pr.purchasePrice) * 0.8 : pr.currentValue * 0.97;
         if (pr.mortgageLoanId) { const l = pl.loans.find(x => x.id === pr.mortgageLoanId); if (l) { net -= l.balance; pl.loans = pl.loans.filter(x => x.id !== l.id); } }
         pl.cash += net;
         state.realEstate = state.realEstate.filter(x => x.id !== pr.id);
@@ -1507,9 +1552,127 @@ textarea{width:100%;resize:vertical}
         pushLog(state, pl.insured ? 'Contrataste un seguro corporativo (' + Math.round(insuranceCostFor(state)).toLocaleString('en') + '/sem). Mitiga golpes de eventos.' : 'Cancelaste el seguro.', 'info');
         return { ok: true };
       }
+      case 'buyClub': {
+        if (state.football) return bad('Ya tenes un club.');
+        const price = 2200000; // club de 5ta division
+        if (pl.cash < price) return bad('Comprar un club de 5ta division cuesta USD ' + price.toLocaleString('en') + '.');
+        pl.cash -= price;
+        const f = {
+          clubName: A.name || 'Union Victoria FC', division: 5, seasonNum: 1, seasonTick: 0, played: 0, pts: 0,
+          players: [], coach: { name: fbName(state), quality: 0.3, wage: 900 },
+          academy: 0, facilities: 0,
+          stadium: { capacity: 4500, ticketPrice: 12, upgradeTicks: 0 },
+          fanbase: 6000, brand: 0.05, strength: 0, leaguePos: null, lastResults: '', cashContribution: 0,
+        };
+        for (let i = 0; i < 16; i++) f.players.push(fbMakePlayer(state, 5, i >= 12));
+        state.football = f;
+        fbNewSeasonTable(state, f);
+        pushLog(state, 'Compraste ' + f.clubName + ' (5ta division inglesa) por USD ' + price.toLocaleString('en') + '. El camino a la elite empieza abajo.', 'good');
+        awardMilestone(state, 'fbClub', 'Compraste un club de futbol ingles.');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
+      case 'fbBuyPlayer': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        if (!fbWindowOpen(f)) return bad('El mercado de pases esta cerrado (ventanas: inicio de temporada y mitad).');
+        const i = f.market.findIndex(p => p.id === A.playerId); if (i < 0) return bad('Jugador no disponible');
+        const p = f.market[i];
+        if (pl.cash < p.fee) return bad('Fee de transferencia: USD ' + p.fee.toLocaleString('en'));
+        if (f.players.length >= 25) return bad('Plantel completo (25).');
+        pl.cash -= p.fee; f.fin.fees += p.fee;
+        f.market.splice(i, 1);
+        const np = Object.assign({}, p); delete np.fee; np.contract = 3; np.morale = 0.75;
+        f.players.push(np);
+        pushLog(state, 'Fichaste a ' + np.name + ' (' + np.pos + ', nivel ' + np.ability + ') por USD ' + p.fee.toLocaleString('en') + '.', 'good');
+        return { ok: true };
+      }
+      case 'fbSellPlayer': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        if (!fbWindowOpen(f)) return bad('El mercado de pases esta cerrado.');
+        const i = f.players.findIndex(p => p.id === A.playerId); if (i < 0) return bad('Jugador no encontrado');
+        if (f.players.length <= 12) return bad('Plantel minimo: 12 jugadores.');
+        const p = f.players[i];
+        const fee = Math.round(p.value * 0.9);
+        pl.cash += fee; f.fin.sales += fee;
+        f.players.splice(i, 1);
+        for (const q of f.players) q.morale = clamp(q.morale - (p.ability > 60 ? 0.06 : 0.02), 0.2, 1);
+        pushLog(state, 'Vendiste a ' + p.name + ' por USD ' + fee.toLocaleString('en') + '.', 'info');
+        return { ok: true, fee };
+      }
+      case 'fbRenew': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        const p = f.players.find(x => x.id === A.playerId); if (!p) return bad('Jugador no encontrado');
+        p.contract += 2; p.wage = Math.round(p.wage * 1.3); p.morale = clamp(p.morale + 0.1, 0, 1);
+        pushLog(state, 'Renovaste a ' + p.name + ' (+2 temporadas, salario +30%).', 'info');
+        return { ok: true };
+      }
+      case 'fbCoach': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        const tier = clamp(fin(A.tier, 0.5), 0.2, 1);
+        const cost = Math.round(50000 * tier * tier * 10);
+        if (pl.cash < cost) return bad('Contratar este DT cuesta USD ' + cost.toLocaleString('en') + ' (indemnizacion + prima).');
+        pl.cash -= cost;
+        f.coach = { name: fbName(state), quality: tier, wage: Math.round(600 + tier * 9000) };
+        pushLog(state, 'Nuevo DT: ' + f.coach.name + ' (calidad ' + Math.round(tier * 100) + ').', 'good');
+        return { ok: true };
+      }
+      case 'fbAcademy': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        if (f.academy >= 5) return bad('Academia al maximo.');
+        const cost = 400000 * (f.academy + 1);
+        if (pl.cash < cost) return bad('Costo USD ' + cost.toLocaleString('en'));
+        pl.cash -= cost; f.academy++;
+        pushLog(state, 'Academia nivel ' + f.academy + ': mas juveniles y de mayor potencial.', 'good');
+        return { ok: true };
+      }
+      case 'fbFacilities': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        if (f.facilities >= 5) return bad('Instalaciones al maximo.');
+        const cost = 600000 * (f.facilities + 1);
+        if (pl.cash < cost) return bad('Costo USD ' + cost.toLocaleString('en'));
+        pl.cash -= cost; f.facilities++;
+        pushLog(state, 'Instalaciones nivel ' + f.facilities + ': mejor desarrollo de jugadores.', 'good');
+        return { ok: true };
+      }
+      case 'fbStadium': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        if (f.stadium.upgradeTicks > 0) return bad('Ya hay una obra en curso.');
+        const cost = Math.round(f.stadium.capacity * 350);
+        if (pl.cash < cost) return bad('Ampliar el estadio cuesta USD ' + cost.toLocaleString('en'));
+        pl.cash -= cost; f.stadium.upgradeTicks = 20;
+        pushLog(state, 'Obra iniciada: ampliacion del estadio (+35% capacidad, 20 semanas).', 'info');
+        return { ok: true };
+      }
+      case 'fbTicket': {
+        const f = state.football; if (!f) return bad('No tenes club.');
+        f.stadium.ticketPrice = clamp(fin(A.price, 12), 2, 300);
+        return { ok: true };
+      }
+      case 'donate': {
+        const n = (state.nations || []).find(x => x.id === A.countryId); if (!n) return bad('Pais no encontrado');
+        const amt = fin(A.amount, 0); if (amt <= 0) return bad('Monto invalido');
+        if (pl.cash < amt) return bad('No tenes ese efectivo.');
+        pl.cash -= amt; n.received += amt;
+        pl.philanthropy = (pl.philanthropy || 0) + amt;
+        // impacto por dolar: mucho mayor en paises pobres; rendimientos decrecientes con lo ya recibido
+        const scale = n.gdpPerCapita * n.population * 0.02;
+        const eff = amt / Math.max(scale, 1) * (1 / (1 + n.received / Math.max(scale * 3, 1)));
+        const pts = clamp(eff * 100, 0, 15);
+        const area = A.area || 'general';
+        if (area === 'salud') n._pendH = (n._pendH || 0) + pts;
+        else if (area === 'educacion') n._pendE = (n._pendE || 0) + pts;
+        else if (area === 'pobreza') n._pendP = (n._pendP || 0) + pts * 0.7;
+        else { n._pendH = (n._pendH || 0) + pts * 0.3; n._pendE = (n._pendE || 0) + pts * 0.3; n._pendP = (n._pendP || 0) + pts * 0.2; n._pendG = (n._pendG || 0) + eff * 0.05; }
+        // beneficio suave de reputacion: marca de todas tus empresas (capeado)
+        for (const co of state.companies) co.brandStrength = clamp(co.brandStrength + Math.min(0.02, amt / 5e8), 0, 1);
+        pushLog(state, 'Donaste USD ' + Math.round(amt).toLocaleString('en') + ' a ' + n.name + ' (' + area + '). Tu legado crece.', 'good');
+        awardMilestone(state, 'firstDonate', 'Primera donacion internacional.');
+        recomputeNetWorth(state);
+        return { ok: true };
+      }
       case 'chooseEvent': {
         if (!state.event.active) return bad('No hay evento activo');
-        return resolveEvent(state, A.choiceIndex);
+        return resolveEvent(state, A.choiceIndex, A.eventUid);
       }
       default:
         return bad('Acción desconocida: ' + A.type);
@@ -1556,13 +1719,17 @@ textarea{width:100%;resize:vertical}
     const e = cands[Math.floor(rngNext(state) * cands.length)];
     return { id: e.id, title: e.title, desc: typeof e.desc === 'function' ? e.desc(state) : e.desc, choices: e.choices.map(c => ({ label: c.label, hint: c.hint || '' })) };
   }
-  function resolveEvent(state, idx) {
-    const active = state.event.active; if (!active) return bad('No hay evento');
+  function resolveEvent(state, idx, evUid) {
+    if (!state.pendingEvents) state.pendingEvents = [];
+    let qi = evUid ? state.pendingEvents.findIndex(e => e.uid === evUid) : 0;
+    if (qi < 0 || !state.pendingEvents[qi]) return bad('No hay evento');
+    const active = state.pendingEvents[qi];
     const def = EVENTS.find(e => e.id === active.id);
-    const choice = def.choices[idx]; if (!choice) return bad('Opción inválida');
+    const choice = def.choices[idx]; if (!choice) return bad('Opcion invalida');
     choice.apply(state);
-    pushLog(state, 'Evento «' + active.title + '»: elegiste ' + choice.label + '.', 'info');
-    state.event.active = null;
+    pushLog(state, 'Decision tomada (' + active.title + '): ' + choice.label + '.', 'info');
+    state.pendingEvents.splice(qi, 1);
+    state.event.active = state.pendingEvents[0] || null;
     recomputeNetWorth(state);
     return { ok: true };
   }
@@ -1746,6 +1913,174 @@ textarea{width:100%;resize:vertical}
   function state_obs(s, c) { return state_obsProduct(s, c.productId); }
   function state_obsProduct(s, pid) { return s.products[pid] && s.products[pid].obs > 0; }
 
+  // ================================================== CLUB DE FUTBOL (Bloque 6)
+  // 1 temporada = 42 ticks (38 fechas + 4 de receso). Divisiones 5 (semi-amateur) a 1 (elite).
+  const FB = {
+    SEASON: 42, MATCHES: 38,
+    TV: { 1: 1500000, 2: 350000, 3: 90000, 4: 30000, 5: 9000 },          // TV/premios por semana
+    PRIZE: { 1: 40e6, 2: 9e6, 3: 2.5e6, 4: 800000, 5: 250000 },          // premio fin de temporada (1er puesto; escala por posicion)
+    ABILITY: { 1: [68, 88], 2: [58, 76], 3: [48, 66], 4: [38, 56], 5: [30, 46] }, // rango de nivel por division
+    RIVALS: ['Ironbridge United','Blackmoor City','Redhaven FC','Grimsdale Athletic','Kingsport Rovers','Ashford Town','Milldale Wanderers','Stonecroft FC','Harborview FC','Oldbury Albion','Westfen United','Northgate FC','Silverton City','Foxhall Rangers','Eastmere Town','Dunmoor FC','Claybrook FC','Wolverdale FC'],
+    FIRST: ['Jack','Harry','Ollie','Tom','Alfie','Charlie','Liam','Mason','Kai','Theo','Leo','Finn','Reece','Callum','Dylan','Owen','Luca','Ethan'],
+    LAST: ['Whitfield','Barrow','Chapman','Holloway','Sutton','Byrne','Farrell','Winslow','Hartley','Mercer','Ashby','Prescott','Dunmore','Kettle','Rowntree','Ellison','Granger','Moss'],
+    POS: ['POR','DEF','DEF','DEF','DEF','MED','MED','MED','MED','DEL','DEL'],
+  };
+  function fbName(state) { return pick(state, FB.FIRST) + ' ' + pick(state, FB.LAST); }
+  function fbPlayerValue(p) {
+    // valor de mercado: nivel^2.6 escalado; los jovenes con potencial valen mas
+    const base = Math.pow(p.ability, 2.6) * 3;
+    const youth = p.age < 23 ? 1 + (p.potential - p.ability) / 60 : 1;
+    const ageMul = p.age >= 31 ? Math.max(0.3, 1 - (p.age - 30) * 0.15) : 1;
+    return Math.round(base * youth * ageMul);
+  }
+  function fbMakePlayer(state, div, young) {
+    const [lo, hi] = FB.ABILITY[div];
+    const age = young ? rngInt(state, 17, 21) : rngInt(state, 20, 32);
+    const ability = Math.round(rngRange(state, lo, hi) * (young ? 0.8 : 1));
+    const potential = Math.min(95, ability + (age < 23 ? rngInt(state, 5, 25) : rngInt(state, 0, 4)));
+    const p = { id: uid('pl'), name: fbName(state), pos: pick(state, FB.POS), age, ability, potential, wage: 0, contract: rngInt(state, 2, 4), morale: 0.7 };
+    p.value = fbPlayerValue(p);
+    p.wage = Math.round(p.value * 0.004 + 150); // salario semanal ~ valor
+    return p;
+  }
+  function fbTeamStrength(f) {
+    const sorted = f.players.slice().sort((a, b) => b.ability - a.ability).slice(0, 11);
+    if (!sorted.length) return 5;
+    const avg = sorted.reduce((s, p) => s + p.ability, 0) / sorted.length;
+    const moraleAvg = f.players.reduce((s, p) => s + p.morale, 0) / Math.max(f.players.length, 1);
+    return avg * (0.8 + 0.4 * f.coach.quality) * (0.88 + 0.12 * moraleAvg) * (1 + 0.03 * f.facilities);
+  }
+  function fbNewSeasonTable(state, f) {
+    const [lo, hi] = FB.ABILITY[f.division];
+    f.table = [];
+    for (let i = 0; i < 9; i++) f.table.push({ name: FB.RIVALS[(i + f.seasonNum * 3) % FB.RIVALS.length], strength: rngRange(state, lo + 3, hi + 6), pts: 0 });
+    f.pts = 0; f.seasonTick = 0; f.played = 0;
+    f.fin = { tv: 0, tickets: 0, merch: 0, sponsor: 0, sales: 0, prizes: 0, wages: 0, staff: 0, fees: 0, maint: 0 };
+    fbRefreshMarket(state, f);
+  }
+  function fbRefreshMarket(state, f) {
+    f.market = [];
+    for (let i = 0; i < 8; i++) {
+      const div = clamp(f.division + (i < 3 ? -1 : 0), 1, 5); // algunos de division superior
+      const p = fbMakePlayer(state, div, i >= 5);
+      p.fee = Math.round(p.value * 1.25);
+      f.market.push(p);
+    }
+  }
+  function fbWindowOpen(f) { const t = f.seasonTick; return (t >= 0 && t < 6) || (t >= 20 && t < 26); }
+
+  function stepFootball(state) {
+    const f = state.football; if (!f) return;
+    const pl = state.player;
+    f.seasonTick++;
+    const strength = fbTeamStrength(f);
+    f.strength = Math.round(strength);
+    let income = 0, expenses = 0;
+    // === partido semanal ===
+    if (f.played < FB.MATCHES) {
+      const rival = f.table[f.played % f.table.length];
+      const diff = (strength - rival.strength) / 18;
+      const roll = rngNext(state) + diff * 0.35;
+      let res;
+      if (roll > 0.62) { f.pts += 3; res = 'G'; } else if (roll > 0.42) { f.pts += 1; res = 'E'; } else res = 'P';
+      f.lastResults = ((f.lastResults || '') + res).slice(-8);
+      f.played++;
+      // rivales suman puntos estadisticamente
+      for (const r of f.table) { const rr = rngNext(state) + (r.strength - (FB.ABILITY[f.division][0] + FB.ABILITY[f.division][1]) / 2) / 40; if (rr > 0.6) r.pts += 3; else if (rr > 0.4) r.pts += 1; }
+      // moral e hinchada siguen los resultados
+      const winBoost = res === 'G' ? 0.02 : res === 'P' ? -0.02 : 0;
+      for (const p of f.players) p.morale = clamp(p.morale + winBoost, 0.2, 1);
+      f.fanbase = Math.max(2000, Math.round(f.fanbase * (1 + winBoost * 0.5)));
+      // dia de partido: entradas (cada 2 fechas es local)
+      if (f.played % 2 === 0) {
+        const interest = clamp(f.fanbase * (0.5 + strength / 200), 0, f.stadium.capacity * 3);
+        const att = Math.min(f.stadium.capacity, interest * clamp(1.3 - f.stadium.ticketPrice / (12 + f.division * 6), 0.2, 1));
+        f.lastAttendance = Math.round(att);
+        income += att * f.stadium.ticketPrice; f.fin.tickets += att * f.stadium.ticketPrice;
+      }
+    }
+    // === ingresos semanales ===
+    const tv = FB.TV[f.division]; income += tv; f.fin.tv += tv;
+    const merch = f.fanbase * 0.35 * (1 + f.brand); income += merch; f.fin.merch += merch;
+    const sponsor = tv * 0.25 * (1 + f.brand * 2); income += sponsor; f.fin.sponsor += sponsor;
+    // === gastos semanales ===
+    const wages = f.players.reduce((s, p) => s + p.wage, 0); expenses += wages; f.fin.wages += wages;
+    const staff = f.coach.wage + 400 * (1 + f.academy + f.facilities); expenses += staff; f.fin.staff += staff;
+    const maint = f.stadium.capacity * 0.9 + (f.academy + f.facilities) * 600; expenses += maint; f.fin.maint += maint;
+    // obra del estadio
+    if (f.stadium.upgradeTicks > 0) { f.stadium.upgradeTicks--; if (f.stadium.upgradeTicks === 0) { f.stadium.capacity = Math.round(f.stadium.capacity * 1.35); pushLog(state, 'Ampliacion del estadio terminada: capacidad ' + f.stadium.capacity.toLocaleString('en') + '.', 'good'); } }
+    f.cashContribution = income - expenses;
+    pl.cash += f.cashContribution; state._quarterProfit += f.cashContribution;
+    // FFP: gastar sostenidamente el doble de lo que ingresa trae sancion
+    if (expenses > income * 2 && expenses > 20000) { f.ffpStreak = (f.ffpStreak || 0) + 1; } else f.ffpStreak = 0;
+    if (f.ffpStreak === 12) { const fine = Math.round(expenses * 6); pl.cash -= fine; f.ffpStreak = 0; pushLog(state, 'Sancion de fair play financiero: USD ' + fine.toLocaleString('en') + '. Equilibra los gastos del club.', 'danger'); }
+    // desarrollo semanal de jovenes / declive de veteranos
+    for (const p of f.players) {
+      if (p.age < 23 && p.ability < p.potential && rngNext(state) < 0.1 * (1 + f.facilities * 0.3)) p.ability = Math.min(p.potential, p.ability + 1);
+      p.value = fbPlayerValue(p);
+    }
+    // === fin de temporada ===
+    if (f.seasonTick >= FB.SEASON) {
+      const table = f.table.map(r => r.pts).concat([f.pts]).sort((a, b) => b - a);
+      const pos = table.indexOf(f.pts) + 1;
+      f.leaguePos = pos;
+      const prize = Math.round((FB.PRIZE[f.division] || 0) * Math.max(0.05, 1 - (pos - 1) * 0.12));
+      pl.cash += prize; f.fin.prizes += prize; state._quarterProfit += prize;
+      let msg = 'Temporada ' + f.seasonNum + ' (Div ' + f.division + '): terminaste ' + pos + 'º de 10. Premio USD ' + prize.toLocaleString('en') + '.';
+      if (pos <= 2 && f.division > 1) { f.division--; f.fanbase = Math.round(f.fanbase * 1.6); f.brand = clamp(f.brand + 0.1, 0, 1); msg += ' ¡ASCENSO a la division ' + f.division + '!'; awardMilestone(state, 'fbPromo' + f.division, 'Ascenso a la division ' + f.division + '.'); }
+      else if (pos >= 9 && f.division < 5) { f.division++; f.fanbase = Math.round(f.fanbase * 0.75); msg += ' Descenso a la division ' + f.division + '.'; }
+      if (pos === 1 && f.division === 1) { msg += ' ¡CAMPEON DE LA PRIMERA DIVISION!'; awardMilestone(state, 'fbChamp', 'Campeon de la primera division inglesa.'); f.brand = clamp(f.brand + 0.2, 0, 1); }
+      pushLog(state, msg, pos <= 2 ? 'good' : 'info');
+      // envejecer, contratos, academia
+      for (let i = f.players.length - 1; i >= 0; i--) {
+        const p = f.players[i]; p.age++; p.contract--;
+        if (p.age >= 31) p.ability = Math.max(20, p.ability - rngInt(state, 1, 3));
+        if (p.contract <= 0) { pushLog(state, p.name + ' se fue libre (contrato vencido).', 'warn'); f.players.splice(i, 1); }
+        else p.value = fbPlayerValue(p);
+      }
+      if (f.academy > 0 && rngNext(state) < 0.25 * f.academy) {
+        const y = fbMakePlayer(state, f.division, true); y.potential = Math.min(95, y.potential + f.academy * 3);
+        f.players.push(y); pushLog(state, 'La academia produjo un juvenil: ' + y.name + ' (potencial ' + y.potential + ').', 'good');
+      }
+      f.seasonNum++;
+      fbNewSeasonTable(state, f);
+    } else if (fbWindowOpen(f) && f.seasonTick % 6 === 0) fbRefreshMarket(state, f);
+  }
+  function footballValue(f) {
+    if (!f) return 0;
+    const squad = f.players.reduce((s, p) => s + p.value, 0);
+    return squad + f.stadium.capacity * 250 + f.fanbase * 20 * (1 + f.brand);
+  }
+
+  // ================================================== NACIONES (Bloque 7)
+  function buildNations() {
+    const mk = (id, name, gpc, pop, pov, he, ed) => ({ id, name, gdpPerCapita: gpc, population: pop, poverty: pov, health: he, education: ed, development: Math.round((he + ed) / 2 - pov * 0.3), received: 0 });
+    return [
+      mk('nor', 'Noruega', 82000, 5.5e6, 1, 95, 96), mk('jpn', 'Japon', 34000, 124e6, 2, 94, 92),
+      mk('chl', 'Chile', 16000, 19e6, 9, 80, 78), mk('mex', 'Mexico', 11000, 128e6, 36, 72, 68),
+      mk('bra', 'Brasil', 9200, 214e6, 29, 70, 66), mk('ind', 'India', 2400, 1400e6, 12, 60, 55),
+      mk('ken', 'Kenia', 2100, 54e6, 36, 52, 50), mk('hti', 'Haiti', 1700, 11.5e6, 59, 40, 38),
+      mk('eth', 'Etiopia', 1000, 120e6, 27, 44, 36), mk('ner', 'Niger', 590, 26e6, 41, 35, 22),
+    ];
+  }
+  function stepNations(state) {
+    if (!state.nations) { state.nations = buildNations(); return; }
+    for (const n of state.nations) {
+      // deriva natural lenta: los desarrollados crecen algo, los pobres se estancan
+      const drift = n.development > 60 ? 0.004 : n.development > 40 ? 0.002 : 0.0005;
+      n.gdpPerCapita *= (1 + drift / 52 * 10);
+      n.health = clamp(n.health + drift * 0.3, 0, 100); n.education = clamp(n.education + drift * 0.3, 0, 100);
+      // el efecto de las donaciones pendientes se aplica gradual
+      if (n._pendH) { const d = Math.min(n._pendH, 0.15); n.health = clamp(n.health + d, 0, 100); n._pendH -= d; }
+      if (n._pendE) { const d = Math.min(n._pendE, 0.15); n.education = clamp(n.education + d, 0, 100); n._pendE -= d; }
+      if (n._pendP) { const d = Math.min(n._pendP, 0.1); n.poverty = clamp(n.poverty - d, 0.5, 80); n._pendP -= d; }
+      if (n._pendG) { const d = Math.min(n._pendG, 0.002); n.gdpPerCapita *= (1 + d); n._pendG -= d; }
+      n.development = Math.round(clamp((n.health + n.education) / 2 - n.poverty * 0.3 + Math.log10(n.gdpPerCapita) * 4, 0, 100));
+    }
+    // hito de legado
+    if (state.nations.filter(n => n.received > 0 && n.development >= 70).length >= 3) awardMilestone(state, 'legacy3', 'Legado: 3 paises ayudados superaron desarrollo 70.');
+  }
+
   // ------------------------------------------------------ SERIALIZACIÓN
   function serialize(state) { return JSON.stringify(state); }
   function deserialize(str) { return JSON.parse(str); }
@@ -1826,7 +2161,7 @@ textarea{width:100%;resize:vertical}
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
     PLAYABLE, buildProducts, previewPrice, previewMarketing, previewQuality, insuranceCostFor, regionDistance,
-    bondRateFor, competitorHealth, tenderTerms,
+    bondRateFor, competitorHealth, tenderTerms, RE_TYPES, FB, footballValue, fbTeamStrength, fbWindowOpen,
   };
 });
 </script>
@@ -1881,14 +2216,13 @@ textarea{width:100%;resize:vertical}
   function setSpeed(sp) {
     speed = sp;
     if (timer) { clearInterval(timer); timer = null; }
-    if (sp > 0 && S && !S.gameOver && !S.event.active) timer = setInterval(stepTick, sp === 10 ? 200 : 1500);
+    if (sp > 0 && S && !S.gameOver) timer = setInterval(stepTick, sp === 10 ? 200 : 1500);
     renderHeader();
   }
   function stepTick() {
-    if (!S || S.gameOver || S.event.active) { setSpeed(0); return; }
+    if (!S || S.gameOver) { setSpeed(0); return; }
     E.tick(S);
     if (S.tick % 8 === 0) save();
-    if (S.event.active) { setSpeed(0); render(); openEvent(); return; }
     if (S.gameOver) { setSpeed(0); render(); openGameOver(); return; }
     if (S.won && !victoryShown) { victoryShown = true; setSpeed(0); render(); openVictory(); return; }
     render();
@@ -1916,6 +2250,9 @@ textarea{width:100%;resize:vertical}
     el('hInfl').textContent = (m.annualInflation * 100).toFixed(1) + '%';
     el('hRate').textContent = (m.interestRate * 100).toFixed(1) + '%';
     el('hIdx').textContent = fmtNum(m.stockIndex);
+    var pend = (S.pendingEvents || []).length;
+    el('hBell').style.display = pend ? '' : 'none';
+    el('hBellN').textContent = pend;
     var btns = document.querySelectorAll('#speed .sbtn');
     for (var i = 0; i < btns.length; i++) {
       var sp = parseInt(btns[i].getAttribute('data-sp'), 10);
@@ -1925,9 +2262,10 @@ textarea{width:100%;resize:vertical}
 
   function renderNav() {
     var tabs = el('nav').children;
+    var eff = (active === 'id' || active === 'club' || active === 'naciones') ? 'mas' : active;
     for (var i = 0; i < tabs.length; i++) {
       var t = tabs[i].getAttribute('data-tab');
-      tabs[i].className = 'navit' + (t === active ? ' on' : '');
+      tabs[i].className = 'navit' + (t === eff ? ' on' : '');
     }
   }
 
@@ -1941,6 +2279,9 @@ textarea{width:100%;resize:vertical}
     else if (active === 'finanzas') html = viewFinanzas();
     else if (active === 'inversiones') html = viewInversiones();
     else if (active === 'id') html = viewID();
+    else if (active === 'mas') html = viewMas();
+    else if (active === 'club') html = viewClub();
+    else if (active === 'naciones') html = viewNaciones();
     v.innerHTML = html;
     if (active === 'dash') drawChart();
     else if (active === 'mercado') drawShareCharts();
@@ -1991,7 +2332,7 @@ textarea{width:100%;resize:vertical}
     if (p.insolventStreak > 0) alerts += alert('bad', '⚠ INSOLVENCIA (' + p.insolventStreak + '/6 semanas). Vendé activos, refinanciá o recortá costos o caés en bancarrota.');
     var unpaid = p.loans.filter(function (l) { return l.missed > 0; });
     if (unpaid.length) alerts += alert('warn', '● ' + unpaid.length + ' préstamo(s) con cuota impaga. El interés se capitaliza y tu score baja.');
-    if (S.event.active) alerts += alert('warn', '● Hay un evento pendiente de decisión. <b>Tocá para resolver.</b>', 'MG.openEvent()');
+    
     if (S.won) alerts += alert('good', '🏆 ¡Ganaste! Modo libre activo.');
 
     var sc = scoreColor(p.creditScore);
@@ -2006,6 +2347,18 @@ textarea{width:100%;resize:vertical}
       '</div>' + prog + '</div>';
 
     html += alerts;
+
+    // decisiones pendientes (no intrusivas: el jugador decide cuándo atenderlas)
+    var pend = S.pendingEvents || [];
+    if (pend.length) {
+      html += '<div class="card" style="border-color:#5a4516"><div class="ttl warn">⚡ Decisiones pendientes (' + pend.length + ')</div>' +
+        pend.map(function (ev) {
+          return '<div class="lrow"><b>' + esc(ev.title) + '</b><div class="sm muted" style="margin:4px 0 8px">' + esc(ev.desc) + '</div>' +
+            ev.choices.map(function (c, i) {
+              return '<button class="btn evb" onclick="MG.chooseEventQ(\'' + ev.uid + '\',' + i + ')"><b>' + esc(c.label) + '</b>' + (c.hint ? '<span class="sm muted"> — ' + esc(c.hint) + '</span>' : '') + '</button>';
+            }).join('') + '</div>';
+        }).join('') + '</div>';
+    }
 
     html += '<div class="card"><div class="ttl">Indicadores macro</div><div class="grid2">' +
       kv('Ciclo', m.cyclePhase > 0.25 ? 'Auge' : m.cyclePhase < -0.25 ? 'Recesión' : 'Neutral') +
@@ -2311,18 +2664,28 @@ textarea{width:100%;resize:vertical}
         }).join('') + '</div>';
     }
 
-    h += '<div class="card"><div class="ttl">Bienes raíces</div>' +
-      '<div class="row"><span class="lbl">Estado</span><select id="i_rereg">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
-      '<div class="row"><span class="lbl">Tipo</span><select id="i_retype"><option value="residential">Residencial</option><option value="commercial">Comercial</option><option value="industrial">Industrial</option><option value="land">Terreno</option></select></div>' +
+    var reOpts = Object.keys(E.RE_TYPES).map(function (tid) {
+      var T = E.RE_TYPES[tid];
+      return '<option value="' + tid + '">' + esc(T.name) + ' — ' + fmtUSD(T.base) + ', obra ' + T.build + ' sem</option>';
+    }).join('');
+    h += '<div class="card"><div class="ttl">Desarrollo inmobiliario</div>' +
+      '<div class="sm muted">De una casa a una urbanización entera. Obra en semanas sin ingreso; terminada, vale ~25% más que el capital y genera renta.</div>' +
+      '<div class="row"><span class="lbl">Estado</span><select id="i_rereg" onchange="MG.rePrev()">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
+      '<div class="row"><span class="lbl">Proyecto</span><select id="i_retype" onchange="MG.rePrev()">' + reOpts + '</select></div>' +
       '<label class="chk"><input type="checkbox" id="i_remort" checked> Financiar con hipoteca (25% de anticipo)</label>' +
-      '<button class="btn pri" onclick="MG.buyProp()">Comprar propiedad</button></div>';
+      '<div class="sm amber" id="rePrev"></div>' +
+      '<button class="btn pri" onclick="MG.buyProp()">Iniciar proyecto</button></div>';
 
-    if (S.realEstate.length) h += '<div class="card"><div class="ttl">Tus propiedades</div>' + S.realEstate.map(function (pr) {
+    if (S.realEstate.length) h += '<div class="card"><div class="ttl">Tu cartera inmobiliaria</div>' + S.realEstate.map(function (pr) {
       var r = S.regions.find(function (x) { return x.id === pr.region; });
-      return '<div class="lrow"><div class="row"><b>' + esc(({ residential: 'Residencial', commercial: 'Comercial', industrial: 'Industrial', land: 'Terreno' })[pr.type]) + '</b><span class="chip">' + esc(r.name) + '</span></div>' +
-        '<div class="grid3 sm">' + mini('Valor', fmtUSD(pr.currentValue)) + mini('Renta/sem', fmtFull(pr.rentPerTick * pr.occupancy)) + mini('Ocupación', pct(pr.occupancy)) + '</div>' +
-        '<div class="row3"><button class="btn ghost" onclick="MG.devProp(\'' + pr.id + '\')">Desarrollar (' + pr.developmentLevel + '/3)</button>' +
-        '<button class="btn ghost" onclick="MG.sellProp(\'' + pr.id + '\')">Vender</button></div></div>';
+      var T = E.RE_TYPES[pr.type] || { name: pr.type };
+      var building = pr.phase === 'building';
+      return '<div class="lrow"><div class="row"><b>' + esc(T.name) + '</b><span class="chip">' + esc(r ? r.name : pr.region) + '</span></div>' +
+        (building
+          ? '<div class="sm warn">🏗 En obra: ' + pr.buildTicksRemaining + ' semanas restantes (capital ' + fmtUSD(pr.capitalInvested) + ', sin ingreso)</div>'
+          : '<div class="grid3 sm">' + mini('Valor', fmtUSD(pr.currentValue)) + mini('Renta/sem', fmtFull(pr.rentPerTick * pr.occupancy)) + mini('Ocupación', pct(pr.occupancy)) + '</div>') +
+        '<div class="row3">' + (building ? '' : '<button class="btn ghost" onclick="MG.devProp(\'' + pr.id + '\')">Mejorar (' + pr.developmentLevel + '/3)</button>') +
+        '<button class="btn ghost" onclick="MG.sellProp(\'' + pr.id + '\')">Vender' + (building ? ' (a pérdida)' : '') + '</button></div></div>';
     }).join('') + '</div>';
     return h;
   }
@@ -2368,6 +2731,115 @@ textarea{width:100%;resize:vertical}
     if (e.patent) d.push('patentes (frena copias)');
     if (e.riskCut) d.push('−' + (e.riskCut * 100).toFixed(0) + '% prima de riesgo crediticio');
     return d.join(' · ');
+  }
+
+  // --------------------------------------------------------------------------- MÁS
+  function viewMas() {
+    var f = S.football, phil = S.player.philanthropy || 0;
+    return '<div class="card"><div class="ttl">Más secciones</div>' +
+      '<button class="btn ghost" onclick="MG.go(\'id\')">⚗ Investigación y Desarrollo</button>' +
+      '<button class="btn ghost" onclick="MG.go(\'club\')">⚽ Club de fútbol' + (f ? ' — ' + esc(f.clubName) + ' (Div ' + f.division + ')' : ' — comprar club') + '</button>' +
+      '<button class="btn ghost" onclick="MG.go(\'naciones\')">🌍 Naciones y legado' + (phil > 0 ? ' — donado ' + fmtUSD(phil) : '') + '</button>' +
+      '</div>' +
+      '<div class="card"><div class="ttl">Partida</div>' +
+      '<div class="row3"><button class="btn ghost" onclick="MG.exportSave()">Exportar</button>' +
+      '<button class="btn ghost" onclick="MG.importSave()">Importar</button>' +
+      '<button class="btn danger ghost" onclick="MG.reset()">Reiniciar</button></div></div>';
+  }
+
+  // --------------------------------------------------------------------------- CLUB
+  function viewClub() {
+    var f = S.football;
+    var h = '<div class="card"><button class="btn ghost" onclick="MG.go(\'mas\')">‹ Más</button>';
+    if (!f) {
+      h += '<div class="ttl">⚽ Comprá un club inglés</div>' +
+        '<div class="sm muted">Un club de la 5ª división está en venta por <b>$2.20 M</b>. Es chico, pero cada ascenso multiplica los ingresos: la 1ª división paga ' + fmtUSD(E.FB.TV[1]) + '/sem de TV vs ' + fmtUSD(E.FB.TV[5]) + '/sem de la 5ª. Plantel, DT, academia, estadio: vos ponés el presupuesto.</div>' +
+        '<div class="row"><span class="lbl">Nombre</span><input type="text" id="fb_name" value="Union Victoria FC"></div>' +
+        '<button class="btn pri" onclick="MG.buyClub()">Comprar club ($2.20 M)</button></div>';
+      return h;
+    }
+    var stg = f.stadium, win = E.fbWindowOpen(f);
+    var income = f.fin.tv + f.fin.tickets + f.fin.merch + f.fin.sponsor + f.fin.sales + f.fin.prizes;
+    var spend = f.fin.wages + f.fin.staff + f.fin.maint + f.fin.fees;
+    h += '<div class="ttl">' + esc(f.clubName) + ' <span class="chip">División ' + f.division + '</span></div>' +
+      '<div class="grid3 sm">' + mini('Temporada', f.seasonNum + ' · F' + Math.min(f.played, 38) + '/38') + mini('Puntos', f.pts) + mini('Fuerza', f.strength || '—') + '</div>' +
+      '<div class="grid3 sm">' + mini('Resultado/sem', '<span class="' + ((f.cashContribution || 0) >= 0 ? 'good' : 'bad') + '">' + fmtUSD(f.cashContribution || 0) + '</span>') + mini('Hinchas', fmtNum(f.fanbase)) + mini('Últimos', esc(f.lastResults || '—')) + '</div>' +
+      '<div class="sm ' + (win ? 'good' : 'muted') + '">' + (win ? '● Ventana de fichajes ABIERTA' : '○ Mercado de pases cerrado') + ' · valor del club ' + fmtUSD(E.footballValue(f)) + '</div></div>';
+
+    h += '<div class="card"><div class="ttl">Finanzas de la temporada</div>' +
+      '<div class="sm muted">De dónde sale y a dónde va cada dólar:</div>' +
+      '<div class="grid2 sm">' +
+      kv('📺 TV y liga', fmtUSD(f.fin.tv)) + kv('🎟 Entradas', fmtUSD(f.fin.tickets)) +
+      kv('👕 Merchandising', fmtUSD(f.fin.merch)) + kv('🤝 Sponsors', fmtUSD(f.fin.sponsor)) +
+      kv('📤 Ventas de jugadores', fmtUSD(f.fin.sales)) + kv('🏆 Premios', fmtUSD(f.fin.prizes)) +
+      kv('💰 Salarios plantel', '−' + fmtUSD(f.fin.wages)) + kv('👔 DT y staff', '−' + fmtUSD(f.fin.staff)) +
+      kv('🏟 Mantenimiento', '−' + fmtUSD(f.fin.maint)) + kv('📥 Fees de fichajes', '−' + fmtUSD(f.fin.fees)) +
+      '</div><div class="row"><b>Resultado</b><b class="' + (income - spend >= 0 ? 'good' : 'bad') + '">' + fmtUSD(income - spend) + '</b></div></div>';
+
+    var rows = f.table.map(function (r) { return { name: r.name, pts: r.pts, you: false }; });
+    rows.push({ name: f.clubName, pts: f.pts, you: true });
+    rows.sort(function (a, b) { return b.pts - a.pts; });
+    h += '<div class="card"><div class="ttl">Tabla — División ' + f.division + '</div>' +
+      rows.map(function (r, i) {
+        var mk = i < 2 ? '<span class="good">▲</span>' : i >= 8 ? '<span class="bad">▼</span>' : '<span class="muted">·</span>';
+        return '<div class="srow sm">' + mk + '<span class="' + (r.you ? 'amber' : '') + '">' + (i + 1) + '. ' + esc(r.name) + '</span><span style="margin-left:auto">' + r.pts + ' pts</span></div>';
+      }).join('') +
+      '<div class="sm muted">▲ los 2 primeros ascienden · ▼ los 2 últimos descienden</div></div>';
+
+    h += '<div class="card"><div class="ttl">Plantel (' + f.players.length + ') · salarios ' + fmtUSD(f.players.reduce(function (a, p) { return a + p.wage; }, 0)) + '/sem</div>' +
+      f.players.slice().sort(function (a, b) { return b.ability - a.ability; }).map(function (p) {
+        return '<div class="lrow"><div class="row sm"><b>' + esc(p.name) + '</b><span class="chip">' + p.pos + '</span><span class="muted">' + p.age + ' años</span></div>' +
+          '<div class="grid3 sm">' + mini('Nivel', p.ability + (p.age < 23 && p.potential > p.ability ? ' <span class="good">→' + p.potential + '</span>' : '')) + mini('Valor', fmtUSD(p.value)) + mini('Salario', fmtUSD(p.wage) + '/sem · ' + p.contract + 't') + '</div>' +
+          '<div class="row3"><button class="btn ghost" onclick="MG.fbSell(\'' + p.id + '\')">Vender (' + fmtUSD(p.value * 0.9) + ')</button>' +
+          '<button class="btn ghost" onclick="MG.fbRenew(\'' + p.id + '\')">Renovar (+30% sal.)</button></div></div>';
+      }).join('') + '</div>';
+
+    if (win && f.market && f.market.length) {
+      h += '<div class="card"><div class="ttl">Mercado de pases</div>' +
+        f.market.map(function (p) {
+          return '<div class="lrow"><div class="row sm"><b>' + esc(p.name) + '</b><span class="chip">' + p.pos + '</span><span class="muted">' + p.age + ' años</span></div>' +
+            '<div class="grid3 sm">' + mini('Nivel', p.ability + (p.age < 23 && p.potential > p.ability ? ' <span class="good">→' + p.potential + '</span>' : '')) + mini('Fee', fmtUSD(p.fee)) + mini('Salario', fmtUSD(p.wage) + '/sem') + '</div>' +
+            '<button class="btn pri" onclick="MG.fbBuy(\'' + p.id + '\')">Fichar por ' + fmtUSD(p.fee) + '</button></div>';
+        }).join('') + '</div>';
+    }
+
+    h += '<div class="card"><div class="ttl">DT e instalaciones</div>' +
+      '<div class="grid3 sm">' + mini('DT', esc(f.coach.name) + ' (' + Math.round(f.coach.quality * 100) + ')') + mini('Academia', f.academy + '/5') + mini('Entrenamiento', f.facilities + '/5') + '</div>' +
+      '<div class="row3">' +
+      '<button class="btn ghost" onclick="MG.fbCoach(0.5)">DT medio ($1.25M)</button>' +
+      '<button class="btn ghost" onclick="MG.fbCoach(0.8)">DT top ($3.2M)</button></div>' +
+      '<div class="row3">' +
+      '<button class="btn ghost" onclick="MG.fbAcademy()">+Academia (' + fmtUSD(400000 * (f.academy + 1)) + ')</button>' +
+      '<button class="btn ghost" onclick="MG.fbFacil()">+Entrenam. (' + fmtUSD(600000 * (f.facilities + 1)) + ')</button></div>' +
+      '<div class="sm muted">La academia produce juveniles; las instalaciones desarrollan su potencial. Comprar joven barato, desarrollar y vender caro es un negocio real.</div></div>';
+
+    h += '<div class="card"><div class="ttl">Estadio</div>' +
+      '<div class="grid3 sm">' + mini('Capacidad', fmtNum(stg.capacity)) + mini('Última entrada', fmtNum(f.lastAttendance || 0)) + mini('Entrada', fmtFull(stg.ticketPrice)) + '</div>' +
+      (stg.upgradeTicks > 0 ? '<div class="sm warn">Obra en curso: ' + stg.upgradeTicks + ' semanas restantes.</div>' : '<button class="btn ghost" onclick="MG.fbStadium()">Ampliar +35% (' + fmtUSD(stg.capacity * 350) + ', 20 sem)</button>') +
+      '<div class="row"><span class="lbl">Precio entrada</span><input type="number" id="fb_ticket" value="' + stg.ticketPrice + '"><button class="btn" onclick="MG.fbTicket()">Fijar</button></div>' +
+      '<div class="sm muted">Más caro = más por hincha, pero baja la ocupación si te pasás.</div></div>';
+    return h;
+  }
+
+  // ----------------------------------------------------------------------- NACIONES
+  function viewNaciones() {
+    var phil = S.player.philanthropy || 0;
+    var h = '<div class="card"><button class="btn ghost" onclick="MG.go(\'mas\')">‹ Más</button>' +
+      '<div class="ttl">🌍 Naciones y legado</div>' +
+      '<div class="sm muted">Doná parte de tu fortuna y mirá cómo cambia la trayectoria de cada país. Las primeras donaciones a países pobres rinden mucho más por dólar. Es un legado: la plata no vuelve.</div>' +
+      '<div class="grid2 sm">' + kv('Total donado', fmtUSD(phil)) + kv('Países ayudados', (S.nations || []).filter(function (n) { return n.received > 0; }).length) + '</div></div>';
+    h += (S.nations || []).map(function (n) {
+      var dev = n.development;
+      var col = dev >= 70 ? 'good' : dev >= 45 ? 'warn' : 'bad';
+      return '<div class="card"><div class="row"><b>' + esc(n.name) + '</b><span class="chip ' + col + '">Desarrollo ' + dev + '</span></div>' +
+        '<div class="grid3 sm">' + mini('PBI p/c', fmtFull(n.gdpPerCapita)) + mini('Pobreza', n.poverty.toFixed(1) + '%') + mini('Población', (n.population / 1e6).toFixed(0) + 'M') + '</div>' +
+        factorBar('Salud', n.health / 100) + factorBar('Educación', n.education / 100) +
+        (n.received > 0 ? '<div class="sm amber">Tu aporte: ' + fmtUSD(n.received) + '</div>' : '') +
+        '<div class="row"><select id="don_area_' + n.id + '"><option value="general">Desarrollo general</option><option value="salud">Salud</option><option value="educacion">Educación</option><option value="pobreza">Reducción de pobreza</option></select></div>' +
+        '<div class="row"><input type="number" id="don_amt_' + n.id + '" value="1000000" placeholder="monto USD">' +
+        '<button class="btn pri" onclick="MG.donate(\'' + n.id + '\')">Donar</button></div></div>';
+    }).join('');
+    return h;
   }
 
   // ------------------------------------------------------------------- CREAR EMPRESA
@@ -2484,16 +2956,6 @@ textarea{width:100%;resize:vertical}
   }
   function closeModal() { el('modal').style.display = 'none'; }
 
-  function openEvent() {
-    var ev = S.event.active; if (!ev) return;
-    var body = '<div class="mdesc">' + esc(ev.desc) + '</div>' +
-      ev.choices.map(function (c, i) {
-        return '<button class="btn evb" onclick="MG.chooseEvent(' + i + ')"><b>' + esc(c.label) + '</b>' + (c.hint ? '<span class="sm muted"> — ' + esc(c.hint) + '</span>' : '') + '</button>';
-      }).join('');
-    el('modalBox').innerHTML = '<div class="mhead warn">⚡ ' + esc(ev.title) + '</div><div class="mbody">' + body + '</div>';
-    el('modal').style.display = 'flex';
-  }
-  function chooseEvent(i) { var r = E.applyAction(S, { type: 'chooseEvent', choiceIndex: i }); if (r.ok) { closeModal(); save(); render(); } }
 
   function openVictory() {
     var p = S.player;
@@ -2544,8 +3006,19 @@ textarea{width:100%;resize:vertical}
 
   // --------------------------------------------------------------------- HANDLERS
   window.MG = {
-    setSpeed: setSpeed, go: go, openEvent: openEvent, reset: resetGame,
-    closeModal: closeModal, chooseEvent: chooseEvent,
+    setSpeed: setSpeed, go: go, reset: resetGame,
+    closeModal: closeModal,
+    chooseEventQ: function (uid, i) { var r = act({ type: 'chooseEvent', eventUid: uid, choiceIndex: i }); if (r.ok) toast('Decisión aplicada.'); },
+    buyClub: function () { var r = act({ type: 'buyClub', name: (el('fb_name') || {}).value }); if (r.ok) render(); },
+    fbBuy: function (id) { act({ type: 'fbBuyPlayer', playerId: id }); },
+    fbSell: function (id) { if (confirm('¿Vender este jugador?')) act({ type: 'fbSellPlayer', playerId: id }); },
+    fbRenew: function (id) { act({ type: 'fbRenew', playerId: id }); },
+    fbCoach: function (t) { if (confirm('¿Contratar nuevo DT?')) act({ type: 'fbCoach', tier: t }); },
+    fbAcademy: function () { act({ type: 'fbAcademy' }); },
+    fbFacil: function () { act({ type: 'fbFacilities' }); },
+    fbStadium: function () { act({ type: 'fbStadium' }); },
+    fbTicket: function () { act({ type: 'fbTicket', price: num('fb_ticket') }); },
+    donate: function (cid) { act({ type: 'donate', countryId: cid, area: (el('don_area_' + cid) || {}).value, amount: num('don_amt_' + cid) }); },
     openCreate: openCreate, createCost: createCost, doCreate: doCreate,
     openCo: function (id) { coView = id; active = 'empresas'; window.scrollTo(0, 0); render(); },
     backCo: function () { coView = null; render(); },
@@ -2579,6 +3052,12 @@ textarea{width:100%;resize:vertical}
     shortStock: function (tk) { var r = act({ type: 'shortStock', ticker: tk, shares: num('sh_' + tk) }); if (r.ok) toast('Posición corta abierta. Recaudaste ' + fmtUSD(r.proceeds)); },
     cover: function (id) { act({ type: 'coverStock', shortId: id }); },
     buyProp: function () { act({ type: 'buyProperty', region: el('i_rereg').value, propType: el('i_retype').value, mortgage: el('i_remort').checked }); },
+    rePrev: function () {
+      var T = E.RE_TYPES[(el('i_retype') || {}).value]; var r = S.regions.find(function (x) { return x.id === (el('i_rereg') || {}).value; });
+      var d = el('rePrev'); if (!d || !T || !r) return;
+      var price = T.base * r.landPrice * S.macro.reIndex;
+      d.innerHTML = '↳ costo ' + fmtUSD(price) + ' (anticipo ' + fmtUSD(price * 0.25) + ' con hipoteca) · obra ' + T.build + ' sem · renta anual ≈ ' + pct(T.rentY) + ' del valor';
+    },
     devProp: function (id) { act({ type: 'developProperty', propertyId: id }); },
     sellProp: function (id) { act({ type: 'sellProperty', propertyId: id }); },
     research: function (id) { act({ type: 'startResearch', techId: id }); },
@@ -2595,7 +3074,7 @@ textarea{width:100%;resize:vertical}
 
   // ------------------------------------------------------------------------- BOOT
   function boot() {
-    if (load()) { victoryShown = !!(S && S.won); show('game'); active = 'dash'; render(); if (S.event.active) openEvent(); }
+    if (load()) { victoryShown = !!(S && S.won); show('game'); active = 'dash'; render(); }
     else show('onboard');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

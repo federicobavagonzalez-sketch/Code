@@ -49,14 +49,13 @@
   function setSpeed(sp) {
     speed = sp;
     if (timer) { clearInterval(timer); timer = null; }
-    if (sp > 0 && S && !S.gameOver && !S.event.active) timer = setInterval(stepTick, sp === 10 ? 200 : 1500);
+    if (sp > 0 && S && !S.gameOver) timer = setInterval(stepTick, sp === 10 ? 200 : 1500);
     renderHeader();
   }
   function stepTick() {
-    if (!S || S.gameOver || S.event.active) { setSpeed(0); return; }
+    if (!S || S.gameOver) { setSpeed(0); return; }
     E.tick(S);
     if (S.tick % 8 === 0) save();
-    if (S.event.active) { setSpeed(0); render(); openEvent(); return; }
     if (S.gameOver) { setSpeed(0); render(); openGameOver(); return; }
     if (S.won && !victoryShown) { victoryShown = true; setSpeed(0); render(); openVictory(); return; }
     render();
@@ -84,6 +83,9 @@
     el('hInfl').textContent = (m.annualInflation * 100).toFixed(1) + '%';
     el('hRate').textContent = (m.interestRate * 100).toFixed(1) + '%';
     el('hIdx').textContent = fmtNum(m.stockIndex);
+    var pend = (S.pendingEvents || []).length;
+    el('hBell').style.display = pend ? '' : 'none';
+    el('hBellN').textContent = pend;
     var btns = document.querySelectorAll('#speed .sbtn');
     for (var i = 0; i < btns.length; i++) {
       var sp = parseInt(btns[i].getAttribute('data-sp'), 10);
@@ -93,9 +95,10 @@
 
   function renderNav() {
     var tabs = el('nav').children;
+    var eff = (active === 'id' || active === 'club' || active === 'naciones') ? 'mas' : active;
     for (var i = 0; i < tabs.length; i++) {
       var t = tabs[i].getAttribute('data-tab');
-      tabs[i].className = 'navit' + (t === active ? ' on' : '');
+      tabs[i].className = 'navit' + (t === eff ? ' on' : '');
     }
   }
 
@@ -109,6 +112,9 @@
     else if (active === 'finanzas') html = viewFinanzas();
     else if (active === 'inversiones') html = viewInversiones();
     else if (active === 'id') html = viewID();
+    else if (active === 'mas') html = viewMas();
+    else if (active === 'club') html = viewClub();
+    else if (active === 'naciones') html = viewNaciones();
     v.innerHTML = html;
     if (active === 'dash') drawChart();
     else if (active === 'mercado') drawShareCharts();
@@ -159,7 +165,7 @@
     if (p.insolventStreak > 0) alerts += alert('bad', '⚠ INSOLVENCIA (' + p.insolventStreak + '/6 semanas). Vendé activos, refinanciá o recortá costos o caés en bancarrota.');
     var unpaid = p.loans.filter(function (l) { return l.missed > 0; });
     if (unpaid.length) alerts += alert('warn', '● ' + unpaid.length + ' préstamo(s) con cuota impaga. El interés se capitaliza y tu score baja.');
-    if (S.event.active) alerts += alert('warn', '● Hay un evento pendiente de decisión. <b>Tocá para resolver.</b>', 'MG.openEvent()');
+    
     if (S.won) alerts += alert('good', '🏆 ¡Ganaste! Modo libre activo.');
 
     var sc = scoreColor(p.creditScore);
@@ -174,6 +180,18 @@
       '</div>' + prog + '</div>';
 
     html += alerts;
+
+    // decisiones pendientes (no intrusivas: el jugador decide cuándo atenderlas)
+    var pend = S.pendingEvents || [];
+    if (pend.length) {
+      html += '<div class="card" style="border-color:#5a4516"><div class="ttl warn">⚡ Decisiones pendientes (' + pend.length + ')</div>' +
+        pend.map(function (ev) {
+          return '<div class="lrow"><b>' + esc(ev.title) + '</b><div class="sm muted" style="margin:4px 0 8px">' + esc(ev.desc) + '</div>' +
+            ev.choices.map(function (c, i) {
+              return '<button class="btn evb" onclick="MG.chooseEventQ(\'' + ev.uid + '\',' + i + ')"><b>' + esc(c.label) + '</b>' + (c.hint ? '<span class="sm muted"> — ' + esc(c.hint) + '</span>' : '') + '</button>';
+            }).join('') + '</div>';
+        }).join('') + '</div>';
+    }
 
     html += '<div class="card"><div class="ttl">Indicadores macro</div><div class="grid2">' +
       kv('Ciclo', m.cyclePhase > 0.25 ? 'Auge' : m.cyclePhase < -0.25 ? 'Recesión' : 'Neutral') +
@@ -479,18 +497,28 @@
         }).join('') + '</div>';
     }
 
-    h += '<div class="card"><div class="ttl">Bienes raíces</div>' +
-      '<div class="row"><span class="lbl">Estado</span><select id="i_rereg">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
-      '<div class="row"><span class="lbl">Tipo</span><select id="i_retype"><option value="residential">Residencial</option><option value="commercial">Comercial</option><option value="industrial">Industrial</option><option value="land">Terreno</option></select></div>' +
+    var reOpts = Object.keys(E.RE_TYPES).map(function (tid) {
+      var T = E.RE_TYPES[tid];
+      return '<option value="' + tid + '">' + esc(T.name) + ' — ' + fmtUSD(T.base) + ', obra ' + T.build + ' sem</option>';
+    }).join('');
+    h += '<div class="card"><div class="ttl">Desarrollo inmobiliario</div>' +
+      '<div class="sm muted">De una casa a una urbanización entera. Obra en semanas sin ingreso; terminada, vale ~25% más que el capital y genera renta.</div>' +
+      '<div class="row"><span class="lbl">Estado</span><select id="i_rereg" onchange="MG.rePrev()">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
+      '<div class="row"><span class="lbl">Proyecto</span><select id="i_retype" onchange="MG.rePrev()">' + reOpts + '</select></div>' +
       '<label class="chk"><input type="checkbox" id="i_remort" checked> Financiar con hipoteca (25% de anticipo)</label>' +
-      '<button class="btn pri" onclick="MG.buyProp()">Comprar propiedad</button></div>';
+      '<div class="sm amber" id="rePrev"></div>' +
+      '<button class="btn pri" onclick="MG.buyProp()">Iniciar proyecto</button></div>';
 
-    if (S.realEstate.length) h += '<div class="card"><div class="ttl">Tus propiedades</div>' + S.realEstate.map(function (pr) {
+    if (S.realEstate.length) h += '<div class="card"><div class="ttl">Tu cartera inmobiliaria</div>' + S.realEstate.map(function (pr) {
       var r = S.regions.find(function (x) { return x.id === pr.region; });
-      return '<div class="lrow"><div class="row"><b>' + esc(({ residential: 'Residencial', commercial: 'Comercial', industrial: 'Industrial', land: 'Terreno' })[pr.type]) + '</b><span class="chip">' + esc(r.name) + '</span></div>' +
-        '<div class="grid3 sm">' + mini('Valor', fmtUSD(pr.currentValue)) + mini('Renta/sem', fmtFull(pr.rentPerTick * pr.occupancy)) + mini('Ocupación', pct(pr.occupancy)) + '</div>' +
-        '<div class="row3"><button class="btn ghost" onclick="MG.devProp(\'' + pr.id + '\')">Desarrollar (' + pr.developmentLevel + '/3)</button>' +
-        '<button class="btn ghost" onclick="MG.sellProp(\'' + pr.id + '\')">Vender</button></div></div>';
+      var T = E.RE_TYPES[pr.type] || { name: pr.type };
+      var building = pr.phase === 'building';
+      return '<div class="lrow"><div class="row"><b>' + esc(T.name) + '</b><span class="chip">' + esc(r ? r.name : pr.region) + '</span></div>' +
+        (building
+          ? '<div class="sm warn">🏗 En obra: ' + pr.buildTicksRemaining + ' semanas restantes (capital ' + fmtUSD(pr.capitalInvested) + ', sin ingreso)</div>'
+          : '<div class="grid3 sm">' + mini('Valor', fmtUSD(pr.currentValue)) + mini('Renta/sem', fmtFull(pr.rentPerTick * pr.occupancy)) + mini('Ocupación', pct(pr.occupancy)) + '</div>') +
+        '<div class="row3">' + (building ? '' : '<button class="btn ghost" onclick="MG.devProp(\'' + pr.id + '\')">Mejorar (' + pr.developmentLevel + '/3)</button>') +
+        '<button class="btn ghost" onclick="MG.sellProp(\'' + pr.id + '\')">Vender' + (building ? ' (a pérdida)' : '') + '</button></div></div>';
     }).join('') + '</div>';
     return h;
   }
@@ -536,6 +564,115 @@
     if (e.patent) d.push('patentes (frena copias)');
     if (e.riskCut) d.push('−' + (e.riskCut * 100).toFixed(0) + '% prima de riesgo crediticio');
     return d.join(' · ');
+  }
+
+  // --------------------------------------------------------------------------- MÁS
+  function viewMas() {
+    var f = S.football, phil = S.player.philanthropy || 0;
+    return '<div class="card"><div class="ttl">Más secciones</div>' +
+      '<button class="btn ghost" onclick="MG.go(\'id\')">⚗ Investigación y Desarrollo</button>' +
+      '<button class="btn ghost" onclick="MG.go(\'club\')">⚽ Club de fútbol' + (f ? ' — ' + esc(f.clubName) + ' (Div ' + f.division + ')' : ' — comprar club') + '</button>' +
+      '<button class="btn ghost" onclick="MG.go(\'naciones\')">🌍 Naciones y legado' + (phil > 0 ? ' — donado ' + fmtUSD(phil) : '') + '</button>' +
+      '</div>' +
+      '<div class="card"><div class="ttl">Partida</div>' +
+      '<div class="row3"><button class="btn ghost" onclick="MG.exportSave()">Exportar</button>' +
+      '<button class="btn ghost" onclick="MG.importSave()">Importar</button>' +
+      '<button class="btn danger ghost" onclick="MG.reset()">Reiniciar</button></div></div>';
+  }
+
+  // --------------------------------------------------------------------------- CLUB
+  function viewClub() {
+    var f = S.football;
+    var h = '<div class="card"><button class="btn ghost" onclick="MG.go(\'mas\')">‹ Más</button>';
+    if (!f) {
+      h += '<div class="ttl">⚽ Comprá un club inglés</div>' +
+        '<div class="sm muted">Un club de la 5ª división está en venta por <b>$2.20 M</b>. Es chico, pero cada ascenso multiplica los ingresos: la 1ª división paga ' + fmtUSD(E.FB.TV[1]) + '/sem de TV vs ' + fmtUSD(E.FB.TV[5]) + '/sem de la 5ª. Plantel, DT, academia, estadio: vos ponés el presupuesto.</div>' +
+        '<div class="row"><span class="lbl">Nombre</span><input type="text" id="fb_name" value="Union Victoria FC"></div>' +
+        '<button class="btn pri" onclick="MG.buyClub()">Comprar club ($2.20 M)</button></div>';
+      return h;
+    }
+    var stg = f.stadium, win = E.fbWindowOpen(f);
+    var income = f.fin.tv + f.fin.tickets + f.fin.merch + f.fin.sponsor + f.fin.sales + f.fin.prizes;
+    var spend = f.fin.wages + f.fin.staff + f.fin.maint + f.fin.fees;
+    h += '<div class="ttl">' + esc(f.clubName) + ' <span class="chip">División ' + f.division + '</span></div>' +
+      '<div class="grid3 sm">' + mini('Temporada', f.seasonNum + ' · F' + Math.min(f.played, 38) + '/38') + mini('Puntos', f.pts) + mini('Fuerza', f.strength || '—') + '</div>' +
+      '<div class="grid3 sm">' + mini('Resultado/sem', '<span class="' + ((f.cashContribution || 0) >= 0 ? 'good' : 'bad') + '">' + fmtUSD(f.cashContribution || 0) + '</span>') + mini('Hinchas', fmtNum(f.fanbase)) + mini('Últimos', esc(f.lastResults || '—')) + '</div>' +
+      '<div class="sm ' + (win ? 'good' : 'muted') + '">' + (win ? '● Ventana de fichajes ABIERTA' : '○ Mercado de pases cerrado') + ' · valor del club ' + fmtUSD(E.footballValue(f)) + '</div></div>';
+
+    h += '<div class="card"><div class="ttl">Finanzas de la temporada</div>' +
+      '<div class="sm muted">De dónde sale y a dónde va cada dólar:</div>' +
+      '<div class="grid2 sm">' +
+      kv('📺 TV y liga', fmtUSD(f.fin.tv)) + kv('🎟 Entradas', fmtUSD(f.fin.tickets)) +
+      kv('👕 Merchandising', fmtUSD(f.fin.merch)) + kv('🤝 Sponsors', fmtUSD(f.fin.sponsor)) +
+      kv('📤 Ventas de jugadores', fmtUSD(f.fin.sales)) + kv('🏆 Premios', fmtUSD(f.fin.prizes)) +
+      kv('💰 Salarios plantel', '−' + fmtUSD(f.fin.wages)) + kv('👔 DT y staff', '−' + fmtUSD(f.fin.staff)) +
+      kv('🏟 Mantenimiento', '−' + fmtUSD(f.fin.maint)) + kv('📥 Fees de fichajes', '−' + fmtUSD(f.fin.fees)) +
+      '</div><div class="row"><b>Resultado</b><b class="' + (income - spend >= 0 ? 'good' : 'bad') + '">' + fmtUSD(income - spend) + '</b></div></div>';
+
+    var rows = f.table.map(function (r) { return { name: r.name, pts: r.pts, you: false }; });
+    rows.push({ name: f.clubName, pts: f.pts, you: true });
+    rows.sort(function (a, b) { return b.pts - a.pts; });
+    h += '<div class="card"><div class="ttl">Tabla — División ' + f.division + '</div>' +
+      rows.map(function (r, i) {
+        var mk = i < 2 ? '<span class="good">▲</span>' : i >= 8 ? '<span class="bad">▼</span>' : '<span class="muted">·</span>';
+        return '<div class="srow sm">' + mk + '<span class="' + (r.you ? 'amber' : '') + '">' + (i + 1) + '. ' + esc(r.name) + '</span><span style="margin-left:auto">' + r.pts + ' pts</span></div>';
+      }).join('') +
+      '<div class="sm muted">▲ los 2 primeros ascienden · ▼ los 2 últimos descienden</div></div>';
+
+    h += '<div class="card"><div class="ttl">Plantel (' + f.players.length + ') · salarios ' + fmtUSD(f.players.reduce(function (a, p) { return a + p.wage; }, 0)) + '/sem</div>' +
+      f.players.slice().sort(function (a, b) { return b.ability - a.ability; }).map(function (p) {
+        return '<div class="lrow"><div class="row sm"><b>' + esc(p.name) + '</b><span class="chip">' + p.pos + '</span><span class="muted">' + p.age + ' años</span></div>' +
+          '<div class="grid3 sm">' + mini('Nivel', p.ability + (p.age < 23 && p.potential > p.ability ? ' <span class="good">→' + p.potential + '</span>' : '')) + mini('Valor', fmtUSD(p.value)) + mini('Salario', fmtUSD(p.wage) + '/sem · ' + p.contract + 't') + '</div>' +
+          '<div class="row3"><button class="btn ghost" onclick="MG.fbSell(\'' + p.id + '\')">Vender (' + fmtUSD(p.value * 0.9) + ')</button>' +
+          '<button class="btn ghost" onclick="MG.fbRenew(\'' + p.id + '\')">Renovar (+30% sal.)</button></div></div>';
+      }).join('') + '</div>';
+
+    if (win && f.market && f.market.length) {
+      h += '<div class="card"><div class="ttl">Mercado de pases</div>' +
+        f.market.map(function (p) {
+          return '<div class="lrow"><div class="row sm"><b>' + esc(p.name) + '</b><span class="chip">' + p.pos + '</span><span class="muted">' + p.age + ' años</span></div>' +
+            '<div class="grid3 sm">' + mini('Nivel', p.ability + (p.age < 23 && p.potential > p.ability ? ' <span class="good">→' + p.potential + '</span>' : '')) + mini('Fee', fmtUSD(p.fee)) + mini('Salario', fmtUSD(p.wage) + '/sem') + '</div>' +
+            '<button class="btn pri" onclick="MG.fbBuy(\'' + p.id + '\')">Fichar por ' + fmtUSD(p.fee) + '</button></div>';
+        }).join('') + '</div>';
+    }
+
+    h += '<div class="card"><div class="ttl">DT e instalaciones</div>' +
+      '<div class="grid3 sm">' + mini('DT', esc(f.coach.name) + ' (' + Math.round(f.coach.quality * 100) + ')') + mini('Academia', f.academy + '/5') + mini('Entrenamiento', f.facilities + '/5') + '</div>' +
+      '<div class="row3">' +
+      '<button class="btn ghost" onclick="MG.fbCoach(0.5)">DT medio ($1.25M)</button>' +
+      '<button class="btn ghost" onclick="MG.fbCoach(0.8)">DT top ($3.2M)</button></div>' +
+      '<div class="row3">' +
+      '<button class="btn ghost" onclick="MG.fbAcademy()">+Academia (' + fmtUSD(400000 * (f.academy + 1)) + ')</button>' +
+      '<button class="btn ghost" onclick="MG.fbFacil()">+Entrenam. (' + fmtUSD(600000 * (f.facilities + 1)) + ')</button></div>' +
+      '<div class="sm muted">La academia produce juveniles; las instalaciones desarrollan su potencial. Comprar joven barato, desarrollar y vender caro es un negocio real.</div></div>';
+
+    h += '<div class="card"><div class="ttl">Estadio</div>' +
+      '<div class="grid3 sm">' + mini('Capacidad', fmtNum(stg.capacity)) + mini('Última entrada', fmtNum(f.lastAttendance || 0)) + mini('Entrada', fmtFull(stg.ticketPrice)) + '</div>' +
+      (stg.upgradeTicks > 0 ? '<div class="sm warn">Obra en curso: ' + stg.upgradeTicks + ' semanas restantes.</div>' : '<button class="btn ghost" onclick="MG.fbStadium()">Ampliar +35% (' + fmtUSD(stg.capacity * 350) + ', 20 sem)</button>') +
+      '<div class="row"><span class="lbl">Precio entrada</span><input type="number" id="fb_ticket" value="' + stg.ticketPrice + '"><button class="btn" onclick="MG.fbTicket()">Fijar</button></div>' +
+      '<div class="sm muted">Más caro = más por hincha, pero baja la ocupación si te pasás.</div></div>';
+    return h;
+  }
+
+  // ----------------------------------------------------------------------- NACIONES
+  function viewNaciones() {
+    var phil = S.player.philanthropy || 0;
+    var h = '<div class="card"><button class="btn ghost" onclick="MG.go(\'mas\')">‹ Más</button>' +
+      '<div class="ttl">🌍 Naciones y legado</div>' +
+      '<div class="sm muted">Doná parte de tu fortuna y mirá cómo cambia la trayectoria de cada país. Las primeras donaciones a países pobres rinden mucho más por dólar. Es un legado: la plata no vuelve.</div>' +
+      '<div class="grid2 sm">' + kv('Total donado', fmtUSD(phil)) + kv('Países ayudados', (S.nations || []).filter(function (n) { return n.received > 0; }).length) + '</div></div>';
+    h += (S.nations || []).map(function (n) {
+      var dev = n.development;
+      var col = dev >= 70 ? 'good' : dev >= 45 ? 'warn' : 'bad';
+      return '<div class="card"><div class="row"><b>' + esc(n.name) + '</b><span class="chip ' + col + '">Desarrollo ' + dev + '</span></div>' +
+        '<div class="grid3 sm">' + mini('PBI p/c', fmtFull(n.gdpPerCapita)) + mini('Pobreza', n.poverty.toFixed(1) + '%') + mini('Población', (n.population / 1e6).toFixed(0) + 'M') + '</div>' +
+        factorBar('Salud', n.health / 100) + factorBar('Educación', n.education / 100) +
+        (n.received > 0 ? '<div class="sm amber">Tu aporte: ' + fmtUSD(n.received) + '</div>' : '') +
+        '<div class="row"><select id="don_area_' + n.id + '"><option value="general">Desarrollo general</option><option value="salud">Salud</option><option value="educacion">Educación</option><option value="pobreza">Reducción de pobreza</option></select></div>' +
+        '<div class="row"><input type="number" id="don_amt_' + n.id + '" value="1000000" placeholder="monto USD">' +
+        '<button class="btn pri" onclick="MG.donate(\'' + n.id + '\')">Donar</button></div></div>';
+    }).join('');
+    return h;
   }
 
   // ------------------------------------------------------------------- CREAR EMPRESA
@@ -652,16 +789,6 @@
   }
   function closeModal() { el('modal').style.display = 'none'; }
 
-  function openEvent() {
-    var ev = S.event.active; if (!ev) return;
-    var body = '<div class="mdesc">' + esc(ev.desc) + '</div>' +
-      ev.choices.map(function (c, i) {
-        return '<button class="btn evb" onclick="MG.chooseEvent(' + i + ')"><b>' + esc(c.label) + '</b>' + (c.hint ? '<span class="sm muted"> — ' + esc(c.hint) + '</span>' : '') + '</button>';
-      }).join('');
-    el('modalBox').innerHTML = '<div class="mhead warn">⚡ ' + esc(ev.title) + '</div><div class="mbody">' + body + '</div>';
-    el('modal').style.display = 'flex';
-  }
-  function chooseEvent(i) { var r = E.applyAction(S, { type: 'chooseEvent', choiceIndex: i }); if (r.ok) { closeModal(); save(); render(); } }
 
   function openVictory() {
     var p = S.player;
@@ -712,8 +839,19 @@
 
   // --------------------------------------------------------------------- HANDLERS
   window.MG = {
-    setSpeed: setSpeed, go: go, openEvent: openEvent, reset: resetGame,
-    closeModal: closeModal, chooseEvent: chooseEvent,
+    setSpeed: setSpeed, go: go, reset: resetGame,
+    closeModal: closeModal,
+    chooseEventQ: function (uid, i) { var r = act({ type: 'chooseEvent', eventUid: uid, choiceIndex: i }); if (r.ok) toast('Decisión aplicada.'); },
+    buyClub: function () { var r = act({ type: 'buyClub', name: (el('fb_name') || {}).value }); if (r.ok) render(); },
+    fbBuy: function (id) { act({ type: 'fbBuyPlayer', playerId: id }); },
+    fbSell: function (id) { if (confirm('¿Vender este jugador?')) act({ type: 'fbSellPlayer', playerId: id }); },
+    fbRenew: function (id) { act({ type: 'fbRenew', playerId: id }); },
+    fbCoach: function (t) { if (confirm('¿Contratar nuevo DT?')) act({ type: 'fbCoach', tier: t }); },
+    fbAcademy: function () { act({ type: 'fbAcademy' }); },
+    fbFacil: function () { act({ type: 'fbFacilities' }); },
+    fbStadium: function () { act({ type: 'fbStadium' }); },
+    fbTicket: function () { act({ type: 'fbTicket', price: num('fb_ticket') }); },
+    donate: function (cid) { act({ type: 'donate', countryId: cid, area: (el('don_area_' + cid) || {}).value, amount: num('don_amt_' + cid) }); },
     openCreate: openCreate, createCost: createCost, doCreate: doCreate,
     openCo: function (id) { coView = id; active = 'empresas'; window.scrollTo(0, 0); render(); },
     backCo: function () { coView = null; render(); },
@@ -747,6 +885,12 @@
     shortStock: function (tk) { var r = act({ type: 'shortStock', ticker: tk, shares: num('sh_' + tk) }); if (r.ok) toast('Posición corta abierta. Recaudaste ' + fmtUSD(r.proceeds)); },
     cover: function (id) { act({ type: 'coverStock', shortId: id }); },
     buyProp: function () { act({ type: 'buyProperty', region: el('i_rereg').value, propType: el('i_retype').value, mortgage: el('i_remort').checked }); },
+    rePrev: function () {
+      var T = E.RE_TYPES[(el('i_retype') || {}).value]; var r = S.regions.find(function (x) { return x.id === (el('i_rereg') || {}).value; });
+      var d = el('rePrev'); if (!d || !T || !r) return;
+      var price = T.base * r.landPrice * S.macro.reIndex;
+      d.innerHTML = '↳ costo ' + fmtUSD(price) + ' (anticipo ' + fmtUSD(price * 0.25) + ' con hipoteca) · obra ' + T.build + ' sem · renta anual ≈ ' + pct(T.rentY) + ' del valor';
+    },
     devProp: function (id) { act({ type: 'developProperty', propertyId: id }); },
     sellProp: function (id) { act({ type: 'sellProperty', propertyId: id }); },
     research: function (id) { act({ type: 'startResearch', techId: id }); },
@@ -763,7 +907,7 @@
 
   // ------------------------------------------------------------------------- BOOT
   function boot() {
-    if (load()) { victoryShown = !!(S && S.won); show('game'); active = 'dash'; render(); if (S.event.active) openEvent(); }
+    if (load()) { victoryShown = !!(S && S.won); show('game'); active = 'dash'; render(); }
     else show('onboard');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
