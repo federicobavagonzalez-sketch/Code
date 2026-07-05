@@ -400,7 +400,62 @@ section('Eventos (Bloque 9)');
   ok('secuencia de eventos reproducible por seed', JSON.stringify(ea) === JSON.stringify(eb), ea.length + ' vs ' + eb.length);
 }
 
+// ---------------------------------------------------------- V2 BLOQUE 3/4
+section('Bolsa v2: acciones limitadas, tender offer, control 51% (Bloque 3)');
+{
+  const s = M.createInitialState({ seed: 300, startCash: 1e10 });
+  run(s, 30, () => 0);
+  const st = M.listStocks(s).filter(x => x.kind === 'comp').sort((a, b) => a.price * a.sharesOutstanding - b.price * b.sharesOutstanding)[0];
+  // no se pueden comprar más acciones de las que existen
+  const rTooMany = M.applyAction(s, { type: 'buyStock', ticker: st.ticker, shares: st.sharesOutstanding + 10 });
+  ok('no se puede comprar más acciones de las que existen', !rTooMany.ok, rTooMany.reason);
+
+  // tender offer: rechazada sin prima, aceptada con prima
+  const tv = M.tenderTerms(s, st, 0.51);
+  const rLow = M.applyAction(s, { type: 'tenderOffer', ticker: st.ticker, targetPct: 0.51, pricePerShare: st.price * 1.01 });
+  ok('tender offer con prima baja es rechazada', !rLow.ok, rLow.reason);
+  const nwBefore = s.player.netWorth;
+  const cosBefore = s.companies.length;
+  const rOk = M.applyAction(s, { type: 'tenderOffer', ticker: st.ticker, targetPct: 0.51, pricePerShare: tv.requiredPrice });
+  ok('tender offer con prima requerida es aceptada', rOk.ok, rOk.reason);
+  ok('al llegar a 51% la empresa pasa a tus empresas', s.companies.length === cosBefore + 1, s.companies.length);
+  ok('las acciones dejan de contarse (sin doble conteo)', !(st.ticker in s.player.stocks), Object.keys(s.player.stocks).length);
+  M.recomputeNetWorth(s);
+  // el netWorth no salta: pagaste prima (cae algo), la empresa entra como activo
+  ok('netWorth no salta artificialmente con el takeover', s.player.netWorth < nwBefore * 1.05, [fmt(nwBefore), fmt(s.player.netWorth)]);
+  ok('tender cuesta más por acción que el mercado', tv.requiredPrice > tv.marketPrice * 1.15, [tv.marketPrice, tv.requiredPrice]);
+}
+
+section('Acumulación en mercado abierto: slippage encarece el control (Bloque 3)');
+{
+  const s = M.createInitialState({ seed: 301, startCash: 1e10 });
+  run(s, 30, () => 0);
+  // empresa mediana (por capitalización) para que la caja alcance los 4 tramos
+  const sorted = M.listStocks(s).filter(x => x.kind === 'comp').sort((a, b) => a.price * a.sharesOutstanding - b.price * b.sharesOutstanding);
+  const st = sorted[Math.floor(sorted.length / 2)];
+  const chunk = Math.floor(st.sharesOutstanding * 0.1);
+  let costs = [];
+  for (let i = 0; i < 4; i++) { const r = M.applyAction(s, { type: 'buyStock', ticker: st.ticker, shares: chunk }); if (r.ok) costs.push(r.cost / chunk); }
+  ok('cada tramo del 10% cuesta más que el anterior (slippage)', costs.length >= 3 && costs[1] > costs[0] && costs[2] > costs[1], costs.map(c => c.toFixed(2)).join(','));
+}
+
+section('Poder de mercado y monopolio (Bloque 4)');
+{
+  // un vendedor con share>50% sufre menos castigo por precio que uno con share bajo
+  const s = M.createInitialState({ seed: 302, startCash: 1e8 });
+  M.applyAction(s, { type: 'startCompany', productId: 'foodtruck', region: 'CA', name: 'Mono' });
+  const co = s.companies[0];
+  run(s, 10, () => 0);
+  // simular share dominante vs chico y comparar la demanda al mismo sobreprecio
+  co.marketShare = 0.8;
+  const pvDom = M.previewPrice(s, co.id, s.markets.foodtruck.referencePrice * 1.5);
+  co.marketShare = 0.05;
+  const pvSmall = M.previewPrice(s, co.id, s.markets.foodtruck.referencePrice * 1.5);
+  ok('el monopolista sostiene sobreprecio mejor que el chico', pvDom.share > pvSmall.share, [pvSmall.share.toFixed(4), pvDom.share.toFixed(4)]);
+}
+
 console.log('\n========================================');
 console.log('RESULTADO: ' + PASS + ' PASS, ' + FAIL + ' FAIL');
 console.log('========================================');
 process.exit(FAIL ? 1 : 0);
+

@@ -112,6 +112,18 @@
     v.innerHTML = html;
     if (active === 'dash') drawChart();
     else if (active === 'mercado') drawShareCharts();
+    else if (active === 'inversiones') drawSparks();
+  }
+  function drawSparks() {
+    E.listStocks(S).forEach(function (s) {
+      var c = el('sk_' + s.ticker); if (!c || !c.getContext || !s.hist || s.hist.length < 2) return;
+      var ctx = c.getContext('2d'), W = c.width, H = c.height; ctx.clearRect(0, 0, W, H);
+      var mn = Math.min.apply(null, s.hist), mx = Math.max.apply(null, s.hist); if (mx === mn) mx = mn + 1;
+      var up = s.hist[s.hist.length - 1] >= s.hist[0];
+      ctx.beginPath(); ctx.lineWidth = 1.4; ctx.strokeStyle = up ? '#3ddc84' : '#ff5a52';
+      for (var i = 0; i < s.hist.length; i++) { var x = i / (s.hist.length - 1) * (W - 4) + 2; var y = H - 3 - (s.hist[i] - mn) / (mx - mn) * (H - 6); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+      ctx.stroke();
+    });
   }
   function drawShareCharts() {
     var byPid = {};
@@ -338,11 +350,19 @@
       S.competitors.forEach(function (c) { if (c.productId === pid && !c.dead) sellers.push({ name: c.name, price: c.price, share: c.marketShare, you: false }); });
       sellers.sort(function (a, b) { return b.share - a.share; });
       var youHere = sellers.some(function (s) { return s.you; });
+      // concentración del rubro: share del jugador y señal de monopolio/riesgo regulatorio
+      var yourShare = sellers.filter(function (s) { return s.you; }).reduce(function (a, s) { return a + s.share; }, 0);
+      var concHtml = '';
+      if (youHere) {
+        var cls = yourShare > 0.8 ? 'bad' : yourShare > 0.5 ? 'warn' : 'muted';
+        var lbl = yourShare > 0.8 ? '⚠ MONOPOLIO: máximo poder de precios, máximo riesgo regulatorio' : yourShare > 0.5 ? '● Posición dominante: poder de precios, atrae reguladores y entrantes' : 'Concentración: tu cuota nacional ' + pct(yourShare);
+        concHtml = '<div class="sm ' + cls + '" style="margin-top:4px">' + lbl + '</div>';
+      }
       h += '<div class="card"><div class="row"><b>' + esc(p.name) + '</b><span class="chip">ref ' + fmtFull(mk.referencePrice) + '</span></div>' +
         sellers.slice(0, 6).map(function (s) {
           return '<div class="srow"><span class="' + (s.you ? 'amber' : '') + '">' + esc(s.name) + '</span>' +
             '<span class="sm muted">' + fmtFull(s.price) + '</span><span class="bar mini-bar"><div style="width:' + (s.share * 100).toFixed(0) + '%"></div></span><span class="sm">' + pct(s.share) + '</span></div>';
-        }).join('') +
+        }).join('') + concHtml +
         (youHere ? '<div class="sm muted" style="margin-top:6px">Tu cuota de mercado en el tiempo</div><canvas id="sc_' + pid + '" width="480" height="56"></canvas>' : '') + '</div>';
     });
     // salud financiera de competidores
@@ -419,16 +439,30 @@
     var stocks = E.listStocks(S).sort(function (a, b) { return (p.stocks[b.ticker] || 0) - (p.stocks[a.ticker] || 0) || b.price - a.price; });
     h += stocks.slice(0, 16).map(function (s) {
       var owned = p.stocks[s.ticker] || 0;
+      var ownPct = owned / s.sharesOutstanding;
       var yld = s.dividendPerShareYear / Math.max(s.price, 0.01);
       var fund = s.eps * s.peMult + s.book * 0.6;
       var val = s.price < fund * 0.97 ? 'good' : s.price > fund * 1.03 ? 'bad' : 'muted';
-      return '<div class="card co"><div class="row"><b>' + esc(s.ticker) + '</b><span class="chip">' + esc(S.products[s.productId].name) + '</span></div>' +
-        '<div class="grid3 sm">' + mini('Precio', fmtFull(s.price)) + mini('Yield div.', pct(yld)) + mini('Tenés', fmtNum(owned)) + '</div>' +
-        '<div class="sm ' + val + '">Valor fundamental ≈ ' + fmtFull(fund) + (s.price < fund * 0.97 ? ' · barata' : s.price > fund * 1.03 ? ' · cara' : ' · en precio') + '</div>' +
+      var cap = s.price * s.sharesOutstanding;
+      var pe = s.eps > 0 ? (s.price / s.eps).toFixed(1) : '—';
+      var chg = (s.hist && s.hist.length > 1) ? (s.price / s.hist[0] - 1) : 0;
+      var detail = '';
+      if (ownPct >= 0.25 && s.kind === 'comp') {
+        var cmp = S.competitors.find(function (c) { return c.id === s.refId; });
+        if (cmp) detail = '<div class="sm amber">● Accionista relevante (' + pct(ownPct) + '): ganancias/año ' + fmtUSD(cmp.annualEarnings) + ' · capacidad ' + fmtNum(cmp.capacity) + ' u/sem · perfil ' + cmp.profile + '</div>';
+      }
+      return '<div class="card co"><div class="row"><b>' + esc(s.ticker) + '</b><span class="sm ' + (chg >= 0 ? 'good' : 'bad') + '">' + (chg >= 0 ? '▲' : '▼') + pct(Math.abs(chg)) + '</span><span class="chip">' + esc(S.products[s.productId].name) + '</span></div>' +
+        '<canvas id="sk_' + s.ticker + '" width="480" height="36"></canvas>' +
+        '<div class="grid3 sm">' + mini('Precio', fmtFull(s.price)) + mini('P/E', pe) + mini('EPS', '$' + s.eps.toFixed(2)) + '</div>' +
+        '<div class="grid3 sm">' + mini('Capitalización', fmtUSD(cap)) + mini('Yield div.', pct(yld)) + mini('Tenés', fmtNum(owned) + (owned > 0 ? ' (' + pct(ownPct) + ')' : '')) + '</div>' +
+        '<div class="sm ' + val + '">Fundamental ≈ ' + fmtFull(fund) + (s.price < fund * 0.97 ? ' · barata' : s.price > fund * 1.03 ? ' · cara' : ' · en precio') + '</div>' +
+        detail +
         '<div class="row"><input type="number" id="sh_' + s.ticker + '" placeholder="acciones" value="100">' +
         '<button class="btn pri" onclick="MG.buyStock(\'' + s.ticker + '\')">Comprar</button>' +
         '<button class="btn ghost" onclick="MG.sellStock(\'' + s.ticker + '\')">Vender</button>' +
-        '<button class="btn ghost" onclick="MG.shortStock(\'' + s.ticker + '\')">Corto</button></div></div>';
+        '<button class="btn ghost" onclick="MG.shortStock(\'' + s.ticker + '\')">Corto</button></div>' +
+        (s.kind === 'comp' ? '<button class="btn ghost" onclick="MG.openTender(\'' + s.ticker + '\')">Oferta de compra (tomar control 51%)</button>' : '') +
+        '</div>';
     }).join('');
 
     // posiciones cortas abiertas
@@ -578,6 +612,29 @@
   }
   function doBond(id) { var r = act({ type: 'issueBond', companyId: id, amount: num('bond_amt') }); if (r.ok) { closeModal(); toast('Bono emitido.'); } }
 
+  // tender offer con previsualización completa antes de confirmar
+  function openTender(ticker) {
+    var st = S.stocks[ticker]; if (!st) return;
+    var tv = E.tenderTerms(S, st, 0.51);
+    if (!tv) { toast('Empresa no disponible.'); return; }
+    if (tv.sharesNeeded <= 0) { toast('Ya tenés el control.'); return; }
+    modal('Oferta de compra — ' + esc(ticker),
+      '<div class="sm muted">Oferta formal por el control (51%). Los accionistas piden una prima sobre el precio de mercado. Alternativa: acumular de a poco en el mercado (más barato al inicio, pero el slippage encarece llegar al control).</div>' +
+      '<div class="grid2 sm">' +
+        kv('Precio de mercado', fmtFull(tv.marketPrice)) + kv('Prima requerida', '+' + Math.round(tv.premium * 100) + '%') +
+        kv('Precio mínimo/acción', fmtFull(tv.requiredPrice)) + kv('Acciones a comprar', fmtNum(tv.sharesNeeded)) +
+        kv('Costo total', fmtUSD(tv.totalCost)) + kv('Tu efectivo', fmtUSD(S.player.cash)) +
+      '</div>' +
+      '<div class="sm ' + (S.player.cash >= tv.totalCost ? 'good' : 'bad') + '">' + (S.player.cash >= tv.totalCost ? '✓ La oferta sería ACEPTADA y tenés los fondos.' : '✗ No te alcanza el efectivo para esta oferta.') + '</div>',
+      'Confirmar oferta', 'MG.doTender(\'' + ticker + '\')');
+  }
+  function doTender(ticker) {
+    var st = S.stocks[ticker]; if (!st) return;
+    var tv = E.tenderTerms(S, st, 0.51); if (!tv) return;
+    var r = act({ type: 'tenderOffer', ticker: ticker, targetPct: 0.51, pricePerShare: tv.requiredPrice });
+    if (r.ok) { closeModal(); toast('¡Control adquirido! La empresa ahora es tuya.'); }
+  }
+
   // refinanciación con previsualización de la nueva tasa
   function refiPreview(id) {
     var l = S.player.loans.find(function (x) { return x.id === id; }); if (!l) return;
@@ -676,6 +733,7 @@
     openIpo: openIpo, ipoPrev: ipoPrev, doIpo: doIpo,
     openMerge: openMerge, doMerge: doMerge,
     openBond: openBond, doBond: doBond,
+    openTender: openTender, doTender: doTender,
     openOutlet: function (id) { act({ type: 'openOutlet', companyId: id, region: (el('i_outreg') || {}).value }); },
     closeOutlet: function (id, rid) { act({ type: 'closeOutlet', companyId: id, region: rid }); },
     outletPrev: function (id) { var r = S.regions.find(function (x) { return x.id === (el('i_outreg') || {}).value; }); var b = el('outBtn'); if (b && r) b.textContent = 'Abrir tienda (' + fmtUSD(r.population / 1e6 * 800 * 26 * S.macro.inflationIndex) + ')'; },

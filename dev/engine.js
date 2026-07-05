@@ -487,7 +487,12 @@
     // ALCANCE nacional: jugador desde sus estados; competidor desde su footprint (reach)
     const reach = s.isPlayer ? reachMod(state, s.ref, industry) : (s.ref.reach != null ? s.ref.reach : 0.1);
     const price = Math.max(s.price, 0.01);
-    let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * reach / Math.pow(price, C.ATTR_B);
+    // PODER DE MERCADO: con >50% de share, el castigo por precio se reduce (menos alternativas).
+    // Capeado: a 100% de share la sensibilidad al precio baja 35% como máximo.
+    const lastShare = (s.ref && s.ref.marketShare) || 0;
+    const powerCut = lastShare > 0.5 ? 0.35 * Math.min(1, (lastShare - 0.5) / 0.5) : 0;
+    const effB = C.ATTR_B * (1 - powerCut);
+    let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * reach / Math.pow(price, effB);
     // precio de reserva: la demanda colapsa cuando el precio supera ~2× la referencia
     const ref = state.markets[s.productId] ? state.markets[s.productId].referencePrice : state.products[s.productId].refPrice;
     const ratio = price / Math.max(ref, 0.01);
@@ -844,6 +849,9 @@
     // dividendo con tope de yield 4.5% (< piso de loanRate 5.5%): no-arbitraje duro
     const rawDiv = Math.max(0, earnings) * payout / s.sharesOutstanding;
     s.dividendPerShareYear = Math.min(rawDiv, s.price * 0.045);
+    // historial de precio para mini-gráficos (cada 2 ticks, cap 60 puntos)
+    if (!s.hist) s.hist = [];
+    if (state.tick % 2 === 0) { s.hist.push(+s.price.toFixed(2)); if (s.hist.length > 60) s.hist.shift(); }
   }
   function stepCapitalMarkets(state) {
     let idxSum = 0, idxN = 0;
@@ -1072,6 +1080,24 @@
         recomputeNetWorth(state);
         return { ok: true };
       }
+      case 'tenderOffer': {
+        // oferta formal por el control de una cotizante: pagás prima sobre mercado, transferencia instantánea
+        const st = state.stocks[A.ticker]; if (!st || st.dead) return bad('Acción no disponible');
+        if (st.kind !== 'comp') return bad('Solo aplica a empresas competidoras cotizantes.');
+        const tv = tenderTerms(state, st, A.targetPct);
+        if (!tv) return bad('Empresa no disponible');
+        const offerPrice = fin(A.pricePerShare, 0);
+        if (tv.sharesNeeded <= 0) return bad('Ya tenés ese porcentaje.');
+        if (offerPrice < tv.requiredPrice * 0.999) return { ok: false, reason: 'Oferta rechazada: los accionistas piden al menos USD ' + tv.requiredPrice.toFixed(2) + ' por acción (+' + Math.round(tv.premium * 100) + '% sobre mercado).' };
+        const cost = tv.sharesNeeded * offerPrice;
+        if (pl.cash < cost) return bad('Costo total USD ' + Math.round(cost).toLocaleString('en'));
+        pl.cash -= cost;
+        pl.stocks[A.ticker] = (pl.stocks[A.ticker] || 0) + tv.sharesNeeded;
+        pushLog(state, 'Tender offer aceptada: compraste ' + tv.sharesNeeded.toLocaleString('en') + ' acciones de ' + A.ticker + ' a USD ' + offerPrice.toFixed(2) + '.', 'good');
+        maybeTakeover(state, st);
+        recomputeNetWorth(state);
+        return { ok: true, cost };
+      }
       case 'openOutlet': {
         const co = findCo(state, A.companyId); if (!co) return bad('Empresa no encontrada');
         const r = state.regions.find(x => x.id === A.region); if (!r) return bad('Región inválida');
@@ -1169,6 +1195,9 @@
         const s = state.stocks[A.ticker]; if (!s || s.dead) return bad('Acción no disponible');
         const shares = Math.max(0, Math.floor(A.shares || 0));
         if (shares <= 0) return bad('Cantidad inválida');
+        // no se pueden poseer más acciones de las que existen
+        const owned0 = pl.stocks[A.ticker] || 0;
+        if (owned0 + shares > s.sharesOutstanding) return bad('Solo existen ' + s.sharesOutstanding.toLocaleString('en') + ' acciones (tenés ' + owned0.toLocaleString('en') + ').');
         const impact = C.STOCK_IMPACT_K * shares / s.sharesOutstanding;
         const avgPrice = s.price * (1 + impact / 2);
         const cost = shares * avgPrice * (1 + C.COMMISSION);
@@ -1600,6 +1629,19 @@
   function previewMarketing(state, id, spend) { return previewWith(state, id, { marketing: spend }); }
   function previewQuality(state, id, level) { return previewWith(state, id, { qualityLevel: level }); }
 
+  // términos de una tender offer: prima requerida 20-40% según capitalización
+  function tenderTerms(state, st, targetPct) {
+    const c = state.competitors.find(x => x.id === st.refId);
+    if (!c || c.dead) return null;
+    const owned = state.player.stocks[st.ticker] || 0;
+    const pct = clamp(fin(targetPct, 0.51), 0.51, 1);
+    const sharesNeeded = Math.max(0, Math.ceil(st.sharesOutstanding * pct) - owned);
+    const cap = st.price * st.sharesOutstanding;
+    const premium = clamp(0.2 + 0.2 * Math.min(1, cap / 2e9), 0.2, 0.4);
+    const requiredPrice = st.price * (1 + premium);
+    return { sharesNeeded, premium, requiredPrice, marketPrice: st.price, totalCost: sharesNeeded * requiredPrice, ownedPct: owned / st.sharesOutstanding };
+  }
+
   // salud financiera de un competidor (para el panel de competencia)
   function competitorHealth(state, c) {
     const fc = c.fixedCost * state.macro.inflationIndex;
@@ -1622,6 +1664,6 @@
     companyValue, competitorValue, creditLimit, totalDebt, loanRateFor, riskPremium,
     inputCost, listStocks, serialize, deserialize, rngNext, EVENTS_COUNT: EVENTS.length,
     PLAYABLE, buildProducts, previewPrice, previewMarketing, previewQuality, insuranceCostFor, regionDistance,
-    bondRateFor, competitorHealth,
+    bondRateFor, competitorHealth, tenderTerms,
   };
 });

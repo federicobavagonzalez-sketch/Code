@@ -53,6 +53,7 @@ header{position:sticky;top:0;z-index:30;background:#100c08;border-bottom:1px sol
 .btn.ghost{background:transparent;color:#cdbfa8}
 .btn.danger{color:#ff7a72;border-color:#5a2020}
 .co{cursor:pointer}
+canvas{max-width:100%;display:block}
 .srow{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #1a140d}
 .srow>span:first-child{min-width:96px}
 .lrow{padding:8px 0;border-bottom:1px solid #1e1710}
