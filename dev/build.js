@@ -122,7 +122,8 @@ const HTML = `<!DOCTYPE html>
     <div class="tips">
       <b style="color:#cdbfa8">Primeras decisiones</b><br>
       • Pagá la deuda estudiantil al día: construye tu score crediticio.<br>
-      • Abrí un primer negocio chico (el pan es lo más barato).<br>
+      • Abrí un negocio chico accesible (food truck, tienda de barrio o software indie).<br>
+      • Elegí un estado grande (California, Texas) para más alcance de mercado.<br>
       • Fijá un precio con margen y subí marketing de a poco.<br>
       • El tiempo avanza con ▶ / ⏩. Pausá para decidir tranquilo.
     </div>

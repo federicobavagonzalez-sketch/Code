@@ -33,15 +33,15 @@
     STAFF_PER_CAP: 1000, BASE_WAGE: 220, STOCK_INIT_PRICE: 40,
     SHORT_INIT_MARGIN: 0.5, SHORT_MARGIN_CALL: 1.6, SHORT_BORROW: 0.06,
   };
-  C.CONTROL_PREMIUM = 0.35;
+  C.CONTROL_PREMIUM = 0.5;
 
   const STAGES = [
     { id: 0, name: 'Endeudado', min: -Infinity },
     { id: 1, name: 'Emprendedor', min: 0 },
     { id: 2, name: 'PyME', min: 1e6 },
     { id: 3, name: 'Empresario', min: 50e6 },
-    { id: 4, name: 'Corporación', min: 1e9 },
-    { id: 5, name: 'Magnate', min: 100e9 },
+    { id: 4, name: 'Corporación', min: 2e9 },
+    { id: 5, name: 'Magnate', min: 200e9 },
     { id: 6, name: 'Trillonario', min: 1e12 },
   ];
 
@@ -50,49 +50,61 @@
   function buildProducts() {
     const P = {};
     const add = (id, o) => { P[id] = Object.assign({ id, inputs: [], obs: 0, payout: 0.3 }, o); };
-    // materias primas
-    add('grain',   { name: 'Grano',     industry: 'agro',   cat: 'material', tier: 'raw', elasticity: 0.5, refPrice: 0.6,  baseVarCost: 0.25, baseDemand: 400000, pe: 9 });
-    add('cotton',  { name: 'Algodón',   industry: 'agro',   cat: 'material', tier: 'raw', elasticity: 0.7, refPrice: 4,    baseVarCost: 1.6,  baseDemand: 120000, pe: 9 });
-    add('ironOre', { name: 'Mineral Fe',industry: 'mineria',cat: 'material', tier: 'raw', elasticity: 0.6, refPrice: 22,   baseVarCost: 9,    baseDemand: 60000,  pe: 8 });
-    add('oil',     { name: 'Petróleo',  industry: 'energia',cat: 'material', tier: 'raw', elasticity: 0.5, refPrice: 70,   baseVarCost: 30,   baseDemand: 50000,  pe: 10 });
-    add('silicon', { name: 'Silicio',   industry: 'mineria',cat: 'material', tier: 'raw', elasticity: 0.8, refPrice: 30,   baseVarCost: 12,   baseDemand: 35000,  pe: 11 });
-    add('lumber',  { name: 'Madera',    industry: 'agro',   cat: 'material', tier: 'raw', elasticity: 0.7, refPrice: 14,   baseVarCost: 6,    baseDemand: 40000,  pe: 9 });
+    // micro-industrias (accesibles desde el arranque; mercado chico, planta barata)
+    add('foodtruck', { name: 'Food truck',    industry: 'gastro',  cat: 'staple', tier: 'final', elasticity: 0.7, refPrice: 12,  baseVarCost: 7,    baseDemand: 1500000, plantCap: 1500, plantCost: 4000,  nComp: 6, pe: 12 });
+    add('localshop', { name: 'Tienda barrio', industry: 'retail',  cat: 'retail', tier: 'final', elasticity: 1.0, refPrice: 30,  baseVarCost: 22,   baseDemand: 900000,  plantCap: 1000, plantCost: 6000,  nComp: 6, pe: 13 });
+    add('indiegame', { name: 'Software indie',industry: 'software',cat: 'tech',   tier: 'final', elasticity: 1.2, refPrice: 25,  baseVarCost: 5.5,  baseDemand: 2000000, plantCap: 3000, plantCost: 5000,  nComp: 8, pe: 32, obs: 0.3, payout: 0.1 });
+    // materias primas (escala nacional)
+    add('grain',   { name: 'Grano',      industry: 'agro',    cat: 'material', tier: 'raw', elasticity: 0.5, refPrice: 0.6, baseVarCost: 0.25, baseDemand: 60000000, plantCap: 120000, plantCost: 900000,   nComp: 7, pe: 9 });
+    add('cotton',  { name: 'Algodon',    industry: 'agro',    cat: 'material', tier: 'raw', elasticity: 0.7, refPrice: 4,   baseVarCost: 1.6,  baseDemand: 18000000, plantCap: 40000,  plantCost: 800000,   nComp: 6, pe: 9 });
+    add('ironOre', { name: 'Mineral Fe', industry: 'mineria', cat: 'material', tier: 'raw', elasticity: 0.6, refPrice: 22,  baseVarCost: 9,    baseDemand: 9000000,  plantCap: 30000,  plantCost: 3000000,  nComp: 6, pe: 8 });
+    add('oil',     { name: 'Petroleo',   industry: 'energia', cat: 'material', tier: 'raw', elasticity: 0.5, refPrice: 70,  baseVarCost: 30,   baseDemand: 8000000,  plantCap: 25000,  plantCost: 9000000,  nComp: 8, pe: 10 });
+    add('silicon', { name: 'Silicio',    industry: 'mineria', cat: 'material', tier: 'raw', elasticity: 0.8, refPrice: 30,  baseVarCost: 12,   baseDemand: 5000000,  plantCap: 18000,  plantCost: 2500000,  nComp: 5, pe: 11 });
+    add('lumber',  { name: 'Madera',     industry: 'agro',    cat: 'material', tier: 'raw', elasticity: 0.7, refPrice: 14,  baseVarCost: 6,    baseDemand: 6000000,  plantCap: 20000,  plantCost: 700000,   nComp: 6, pe: 9 });
     // intermedios
-    add('flour',   { name: 'Harina',    industry: 'alimentos', cat: 'material', tier: 'inter', elasticity: 0.6, refPrice: 1.2, baseVarCost: 0.4,  baseDemand: 220000, pe: 11, inputs: [['grain', 1]] });
-    add('fabric',  { name: 'Tela',      industry: 'textil',    cat: 'material', tier: 'inter', elasticity: 0.9, refPrice: 8,   baseVarCost: 3,    baseDemand: 90000,  pe: 12, inputs: [['cotton', 1]] });
-    add('steel',   { name: 'Acero',     industry: 'metal',     cat: 'material', tier: 'inter', elasticity: 0.7, refPrice: 60,  baseVarCost: 26,   baseDemand: 40000,  pe: 10, inputs: [['ironOre', 2]] });
-    add('plastic', { name: 'Plástico',  industry: 'quimica',   cat: 'material', tier: 'inter', elasticity: 0.8, refPrice: 20,  baseVarCost: 8,    baseDemand: 50000,  pe: 11, inputs: [['oil', 0.2]] });
-    add('chip',    { name: 'Chip',      industry: 'semis',     cat: 'tech',     tier: 'inter', elasticity: 1.3, refPrice: 80,  baseVarCost: 30,   baseDemand: 30000,  pe: 14, obs: 0.35, inputs: [['silicon', 1]] });
-    add('comp',    { name: 'Componentes',industry: 'electronica',cat:'tech',    tier: 'inter', elasticity: 1.1, refPrice: 25,  baseVarCost: 9,    baseDemand: 70000,  pe: 15, obs: 0.15, inputs: [['plastic', 0.5], ['steel', 0.1]] });
-    // finales
-    add('bread',     { name: 'Pan',         industry: 'alimentos',  cat: 'staple', tier: 'final', elasticity: 0.5, refPrice: 3,     baseVarCost: 1.1,  baseDemand: 200000, pe: 12, inputs: [['flour', 0.5]] });
-    add('packfood',  { name: 'Alimento env.',industry: 'alimentos', cat: 'staple', tier: 'final', elasticity: 0.7, refPrice: 6,     baseVarCost: 2.3,  baseDemand: 130000, pe: 14, inputs: [['flour', 0.4]] });
-    add('clothing',  { name: 'Ropa',        industry: 'textil',     cat: 'retail', tier: 'final', elasticity: 1.0, refPrice: 40,    baseVarCost: 15,   baseDemand: 42000,  pe: 16, inputs: [['fabric', 1]] });
-    add('furniture', { name: 'Muebles',     industry: 'muebles',    cat: 'retail', tier: 'final', elasticity: 1.1, refPrice: 300,   baseVarCost: 120,  baseDemand: 9000,   pe: 14, inputs: [['lumber', 2], ['fabric', 1]] });
-    add('appliance', { name: 'Electrodom.', industry: 'electronica',cat: 'tech',   tier: 'final', elasticity: 1.2, refPrice: 500,   baseVarCost: 210,  baseDemand: 6000,   pe: 15, obs: 0.18, inputs: [['steel', 3], ['comp', 2]] });
-    add('phone',     { name: 'Smartphone',  industry: 'tech',       cat: 'tech',   tier: 'final', elasticity: 1.5, refPrice: 600,   baseVarCost: 220,  baseDemand: 9000,   pe: 16, obs: 0.5,  inputs: [['chip', 1], ['comp', 2]], payout: 0.25 });
-    add('laptop',    { name: 'Laptop',      industry: 'tech',       cat: 'tech',   tier: 'final', elasticity: 1.4, refPrice: 1100,  baseVarCost: 470,  baseDemand: 4200,   pe: 15, obs: 0.4,  inputs: [['chip', 2], ['comp', 3]], payout: 0.25 });
-    add('car',       { name: 'Automóvil',   industry: 'automotriz', cat: 'luxury', tier: 'final', elasticity: 1.8, refPrice: 28000, baseVarCost: 13500,baseDemand: 160,    pe: 12, obs: 0.12, inputs: [['steel', 8], ['comp', 10], ['plastic', 5]] });
-    add('watch',     { name: 'Reloj de lujo',industry: 'lujo',      cat: 'luxury', tier: 'final', elasticity: 2.0, refPrice: 5000,  baseVarCost: 1400, baseDemand: 800,    pe: 18, inputs: [['steel', 0.5]] });
+    add('flour',   { name: 'Harina',      industry: 'alimentos',  cat: 'material', tier: 'inter', elasticity: 0.6, refPrice: 1.2, baseVarCost: 0.5,  baseDemand: 30000000, plantCap: 80000, plantCost: 600000,    nComp: 6, pe: 11, inputs: [['grain', 1]] });
+    add('fabric',  { name: 'Tela',        industry: 'textil',     cat: 'material', tier: 'inter', elasticity: 0.9, refPrice: 8,   baseVarCost: 3.2,  baseDemand: 14000000, plantCap: 30000, plantCost: 900000,    nComp: 6, pe: 12, inputs: [['cotton', 1]] });
+    add('steel',   { name: 'Acero',       industry: 'metal',      cat: 'material', tier: 'inter', elasticity: 0.7, refPrice: 60,  baseVarCost: 30,   baseDemand: 6000000,  plantCap: 20000, plantCost: 6000000,   nComp: 7, pe: 10, inputs: [['ironOre', 2]] });
+    add('plastic', { name: 'Plastico',    industry: 'quimica',    cat: 'material', tier: 'inter', elasticity: 0.8, refPrice: 20,  baseVarCost: 9,    baseDemand: 8000000,  plantCap: 25000, plantCost: 2200000,   nComp: 6, pe: 11, inputs: [['oil', 0.2]] });
+    add('chip',    { name: 'Chip',        industry: 'semis',      cat: 'tech',     tier: 'inter', elasticity: 1.3, refPrice: 80,  baseVarCost: 36,   baseDemand: 7000000,  plantCap: 18000, plantCost: 12000000,  nComp: 6, pe: 18, obs: 0.35, inputs: [['silicon', 1]] });
+    add('comp',    { name: 'Componentes', industry: 'electronica',cat: 'tech',     tier: 'inter', elasticity: 1.1, refPrice: 25,  baseVarCost: 11,   baseDemand: 12000000, plantCap: 30000, plantCost: 2000000,   nComp: 7, pe: 15, obs: 0.15, inputs: [['plastic', 0.5], ['steel', 0.1]] });
+    // finales (escala nacional EE.UU.)
+    add('bread',     { name: 'Pan',          industry: 'alimentos',  cat: 'staple', tier: 'final', elasticity: 0.5, refPrice: 3,     baseVarCost: 2.35, baseDemand: 40000000, plantCap: 40000, plantCost: 350000,   nComp: 8,  pe: 12, inputs: [['flour', 0.5]] });
+    add('packfood',  { name: 'Alimento env.',industry: 'alimentos',  cat: 'staple', tier: 'final', elasticity: 0.7, refPrice: 6,     baseVarCost: 4.5,  baseDemand: 30000000, plantCap: 30000, plantCost: 600000,   nComp: 8,  pe: 14, inputs: [['flour', 0.4]] });
+    add('clothing',  { name: 'Ropa',         industry: 'textil',     cat: 'retail', tier: 'final', elasticity: 1.0, refPrice: 40,    baseVarCost: 27,   baseDemand: 12000000, plantCap: 8000,  plantCost: 800000,   nComp: 10, pe: 16, inputs: [['fabric', 1]] });
+    add('furniture', { name: 'Muebles',      industry: 'muebles',    cat: 'retail', tier: 'final', elasticity: 1.1, refPrice: 300,   baseVarCost: 205,  baseDemand: 1500000,  plantCap: 1500,  plantCost: 1200000,  nComp: 8,  pe: 14, inputs: [['lumber', 2], ['fabric', 1]] });
+    add('appliance', { name: 'Electrodom.',  industry: 'electronica',cat: 'tech',   tier: 'final', elasticity: 1.2, refPrice: 500,   baseVarCost: 355,  baseDemand: 1200000,  plantCap: 1500,  plantCost: 3000000,  nComp: 8,  pe: 15, obs: 0.18, inputs: [['steel', 3], ['comp', 2]] });
+    add('phone',     { name: 'Smartphone',   industry: 'tech',       cat: 'tech',   tier: 'final', elasticity: 1.5, refPrice: 600,   baseVarCost: 400,  baseDemand: 2900000,  plantCap: 4000,  plantCost: 9000000,  nComp: 9,  pe: 18, obs: 0.5,  inputs: [['chip', 1], ['comp', 2]], payout: 0.25 });
+    add('laptop',    { name: 'Laptop',       industry: 'tech',       cat: 'tech',   tier: 'final', elasticity: 1.4, refPrice: 1100,  baseVarCost: 760,  baseDemand: 1200000,  plantCap: 2000,  plantCost: 9000000,  nComp: 8,  pe: 16, obs: 0.4,  inputs: [['chip', 2], ['comp', 3]], payout: 0.25 });
+    add('car',       { name: 'Automovil',    industry: 'automotriz', cat: 'heavy',  tier: 'final', elasticity: 1.6, refPrice: 28000, baseVarCost: 23000,baseDemand: 330000,   plantCap: 2500,  plantCost: 60000000, nComp: 9,  pe: 9,  obs: 0.12, inputs: [['steel', 8], ['comp', 10], ['plastic', 5]] });
+    add('watch',     { name: 'Reloj de lujo',industry: 'lujo',       cat: 'luxury', tier: 'final', elasticity: 2.0, refPrice: 5000,  baseVarCost: 2800, baseDemand: 200000,   plantCap: 500,   plantCost: 4000000,  nComp: 7,  pe: 22, inputs: [['steel', 0.5]] });
+    for (const id in P) { const p = P[id]; if (!p.plantCap) p.plantCap = Math.max(10, p.baseDemand * 0.0005); if (!p.plantCost) p.plantCost = p.plantCap * p.refPrice * 0.5; if (!p.nComp) p.nComp = 6; }
     return P;
   }
 
   // industrias jugables (las que el jugador puede elegir al fundar empresa)
-  const PLAYABLE = ['bread', 'packfood', 'clothing', 'furniture', 'appliance', 'phone', 'laptop', 'car', 'watch',
-    'flour', 'fabric', 'steel', 'plastic', 'chip', 'comp', 'grain', 'cotton', 'ironOre', 'oil', 'silicon', 'lumber'];
+  const PLAYABLE = ['foodtruck', 'localshop', 'indiegame', 'bread', 'packfood', 'clothing', 'furniture', 'appliance', 'phone', 'laptop', 'car', 'watch', 'flour', 'fabric', 'steel', 'plastic', 'chip', 'comp', 'grain', 'cotton', 'ironOre', 'oil', 'silicon', 'lumber'];
 
   // productos sembrados con competidores IA al inicio
-  const SEEDED = ['bread', 'packfood', 'clothing', 'furniture', 'appliance', 'phone', 'laptop', 'car', 'watch', 'steel', 'chip'];
+  const SEEDED = ['foodtruck', 'localshop', 'indiegame', 'bread', 'packfood', 'clothing', 'furniture', 'appliance', 'phone', 'laptop', 'car', 'watch', 'steel', 'chip', 'comp', 'flour', 'fabric'];
 
   // ------------------------------------------------------------------ REGIONES
   function buildRegions() {
+    // 12 estados de EE.UU. con datos diferenciados (poblacion absoluta, gdp/wage/land relativos)
+    const mk=(id,name,pop,gdp,wage,land,tax,aff)=>({id,name,population:pop,gdpPerCapita:gdp,wealthIndex:gdp,wageLevel:wage,landPrice:land,landPrice0:land,taxRate:tax,demandMod:aff,saturation:0.5});
     return [
-      { id: 'norte',    name: 'Distrito Norte',  population: 8.0e6, wealthIndex: 1.35, wageLevel: 1.30, landPrice: 1.4, landPrice0: 1.4, taxRate: 0.27, demandMod: { tech: 1.3, lujo: 1.4, automotriz: 1.2 } },
-      { id: 'centro',   name: 'Capital Centro',  population: 12.0e6,wealthIndex: 1.15, wageLevel: 1.15, landPrice: 1.6, landPrice0: 1.6, taxRate: 0.25, demandMod: { retail: 1.2, alimentos: 1.15 } },
-      { id: 'costa',    name: 'Costa Este',      population: 6.0e6, wealthIndex: 1.05, wageLevel: 1.00, landPrice: 1.0, landPrice0: 1.0, taxRate: 0.24, demandMod: { textil: 1.2, muebles: 1.2 } },
-      { id: 'valle',    name: 'Valle Industrial',population: 5.0e6, wealthIndex: 0.85, wageLevel: 0.80, landPrice: 0.6, landPrice0: 0.6, taxRate: 0.20, demandMod: { metal: 1.3, automotriz: 1.2, electronica: 1.2 } },
-      { id: 'sur',      name: 'Llanura Sur',     population: 4.0e6, wealthIndex: 0.75, wageLevel: 0.70, landPrice: 0.45,landPrice0: 0.45,taxRate: 0.18, demandMod: { agro: 1.4, alimentos: 1.2 } },
-      { id: 'frontera', name: 'Frontera Oeste',  population: 3.0e6, wealthIndex: 0.70, wageLevel: 0.65, landPrice: 0.4, landPrice0: 0.4, taxRate: 0.16, demandMod: { mineria: 1.4, energia: 1.3 } },
+      mk('CA','California',     39.0e6,1.40,1.35,2.20,0.13,{tech:1.4,software:1.5,lujo:1.2,gastro:1.2}),
+      mk('TX','Texas',          30.0e6,1.05,0.95,0.80,0.00,{energia:1.5,automotriz:1.1,metal:1.2,gastro:1.1}),
+      mk('FL','Florida',        22.0e6,0.92,0.92,1.00,0.00,{retail:1.2,lujo:1.15,gastro:1.2,alimentos:1.1}),
+      mk('NY','Nueva York',     19.5e6,1.50,1.40,2.40,0.109,{finanzas:1.5,lujo:1.3,retail:1.15,software:1.1}),
+      mk('IL','Illinois',       12.6e6,1.10,1.10,1.10,0.0495,{alimentos:1.2,metal:1.1,retail:1.1}),
+      mk('PA','Pensilvania',    12.9e6,1.00,1.00,0.90,0.0307,{metal:1.2,quimica:1.2,alimentos:1.1}),
+      mk('OH','Ohio',           11.8e6,0.92,0.88,0.60,0.04,{automotriz:1.2,metal:1.2,muebles:1.1}),
+      mk('GA','Georgia',        11.0e6,0.95,0.90,0.75,0.0575,{textil:1.3,alimentos:1.1,retail:1.1}),
+      mk('NC','Carolina N.',    10.7e6,0.95,0.90,0.80,0.045,{textil:1.3,muebles:1.3,tech:1.1}),
+      mk('MI','Michigan',       10.0e6,0.90,0.95,0.60,0.0425,{automotriz:1.6,metal:1.3,electronica:1.1}),
+      mk('WA','Washington',     7.8e6, 1.45,1.30,1.60,0.00,{tech:1.4,software:1.5,electronica:1.2}),
+      mk('AZ','Arizona',        7.4e6, 0.92,0.92,0.85,0.025,{semis:1.3,electronica:1.2,energia:1.1}),
     ];
   }
 
@@ -157,35 +169,38 @@
     laptop: ['NeoBook', 'TitanPC', 'LumenLap'], car: ['Velocar', 'RutaMotriz', 'AndinAuto'],
     watch: ['CronoLux', 'Aurea', 'Régent'], steel: ['AceroPlus', 'FerroNova'], chip: ['SiliCore', 'NanoFab'],
   };
+  const GENERIC_NAMES = ['Apex','Vertex','Nova','Sterling','Pinnacle','Summit','Atlas','Zenith','Keystone','Beacon','Monarch','Cardinal','Liberty','Horizon'];
   const PROFILES = ['aggressive', 'premium', 'efficient', 'expansionist'];
 
-  function makeCompetitor(state, productId, idx) {
+  function netMarginFor(cat) { return ({ staple: 0.04, retail: 0.05, material: 0.07, heavy: 0.06, tech: 0.12, luxury: 0.20 })[cat] || 0.08; }
+  function targetGrossMargin(cat) { return ({ staple: 0.18, retail: 0.30, material: 0.25, heavy: 0.20, tech: 0.38, luxury: 0.45 })[cat] || 0.25; }
+  function makeCompetitor(state, productId, idx, sizeShare) {
     const p = state.products[productId];
-    const names = COMP_NAMES[productId] || [productId + ' Co'];
-    const name = names[idx % names.length] || (productId + ' #' + idx);
+    const pool = COMP_NAMES[productId] || GENERIC_NAMES;
+    const base = pool[idx % pool.length] || (p.name + ' Co');
+    const name = idx < pool.length ? base : base + ' ' + ('II III IV V VI'.split(' ')[(idx - pool.length) % 5]);
     const profile = PROFILES[(idx + productId.length) % PROFILES.length];
     const region = pick(state, state.regions).id;
-    // markup inicial según perfil
     let markup = profile === 'premium' ? 0.9 : profile === 'aggressive' ? 0.22 : profile === 'efficient' ? 0.4 : 0.55;
-    const fixedCost = p.baseDemand * 0.0008 * p.refPrice * rngRange(state, 0.8, 1.2);
-    const capacity = p.baseDemand * 0.2 * rngRange(state, 0.7, 1.3);
-    const so = Math.round(rngRange(state, 5e6, 5e7));
-    const ticker = (name.replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 4) + idx);
-    const qLevel = profile === 'premium' ? rngRange(state, 4, 6) : rngRange(state, 1, 3);
+    const capacity = Math.max(p.plantCap, sizeShare * p.baseDemand) * rngRange(state, 0.85, 1.15);
+    const reach = clamp(sizeShare * 3.5 + 0.03, 0.03, 0.95);
+    const fixedCost = capacity * p.refPrice * 0.015 * rngRange(state, 0.8, 1.2);
+    const netMargin = netMarginFor(p.cat);
+    const ticker = (base.replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 4) || 'CMP') + idx;
+    const qLevel = profile === 'premium' ? rngRange(state, 4, 6) : rngRange(state, 1.5, 3.5);
     return {
       id: uid('cmp'), name, productId, region, profile,
-      markup, price: p.refPrice * rngRange(state, 0.85, 1.15),
-      capacity, fixedCost,
+      markup, price: p.refPrice * rngRange(state, 0.9, 1.1),
+      capacity, capacity0: capacity, fixedCost, reach,
       qualityLevel: qLevel, qualityCeiling: 6 + (p.cat === 'tech' ? 6 : 2),
-      brandStrength: profile === 'premium' ? rngRange(state, 0.4, 0.7) : rngRange(state, 0.1, 0.4),
+      brandStrength: profile === 'premium' ? rngRange(state, 0.4, 0.7) : rngRange(state, 0.1, 0.45),
       marketingBudget: fixedCost * rngRange(state, 0.2, 0.6),
       rndBudget: (p.cat === 'tech' || profile === 'premium' || profile === 'efficient') ? fixedCost * rngRange(state, 0.1, 0.4) : 0,
       techEff: 0, fresh: 1, cash: fixedCost * 30,
-      marketShare: 0.3, lastSold: 0, lastDemand: 0,
-      // estimación realista de ganancias de régimen (unidades≈share·demanda · margen≈20% · anual)
-      profitHist: [], annualEarnings: p.baseDemand * 0.3 * p.refPrice * 0.2 * 52,
-      targetShare: profile === 'aggressive' ? 0.4 : profile === 'expansionist' ? 0.35 : 0.28,
-      sharesOutstanding: so, public: true, ticker, beta: p.cat === 'luxury' || p.cat === 'tech' ? 1.4 : p.cat === 'staple' ? 0.6 : 1.0,
+      marketShare: sizeShare, lastSold: capacity * 0.8, lastDemand: capacity * 0.9,
+      profitHist: [], annualEarnings: capacity * p.refPrice * netMargin * 52,
+      targetShare: clamp(sizeShare * 1.1, 0.01, 0.5),
+      sharesOutstanding: 1e6, public: true, ticker, beta: p.cat === 'luxury' || p.cat === 'tech' ? 1.4 : p.cat === 'staple' ? 0.6 : 1.0,
       dead: false, age: 0,
     };
   }
@@ -236,10 +251,17 @@
       const p = state.products[id];
       state.markets[id] = { productId: id, referencePrice: p.refPrice, baseDemand: p.baseDemand, lastClearingPrice: p.refPrice, lastTotalDemand: p.baseDemand };
     }
-    // competidores sembrados
+    // competidores sembrados: tamaños dispares que suman ~70% del mercado (gigantes/medianos/chicos)
     for (const pid of SEEDED) {
-      const n = pid === 'car' || pid === 'watch' ? 2 : 3;
-      for (let i = 0; i < n; i++) state.competitors.push(makeCompetitor(state, pid, i));
+      const n = state.products[pid].nComp || 6;
+      for (let i = 0; i < n; i++) {
+        let sizeShare;
+        if (i === 0) sizeShare = rngRange(state, 0.16, 0.24);          // líder
+        else if (i === 1) sizeShare = rngRange(state, 0.10, 0.16);     // co-líder
+        else if (i < Math.ceil(n * 0.5)) sizeShare = rngRange(state, 0.04, 0.08); // medianos
+        else sizeShare = rngRange(state, 0.005, 0.02);                 // chicos
+        state.competitors.push(makeCompetitor(state, pid, i, sizeShare));
+      }
     }
     rebuildStocks(state);
     // deuda estudiantil
@@ -300,8 +322,9 @@
   }
 
   // -------------------------------------------------------------- VALUACIÓN
-  function factoryCapacity(p) { return Math.max(10, p.baseDemand * 0.1); }
-  function factoryCost(p, region) { return Math.max(4000, factoryCapacity(p) * p.refPrice * 0.2 * region.landPrice); }
+  // capacidad de UNA planta (absoluta) y su costo (gating por capital). El costo escala con el landPrice del estado.
+  function factoryCapacity(p) { return p.plantCap || Math.max(10, p.baseDemand * 0.0005); }
+  function factoryCost(p, region) { return (p.plantCost || factoryCapacity(p) * p.refPrice * 0.5) * (0.7 + 0.3 * (region ? region.landPrice : 1)); }
   function regionDistance(state, a, b) {
     if (a === b) return 0;
     const ia = state.regions.findIndex(r => r.id === a), ib = state.regions.findIndex(r => r.id === b);
@@ -428,30 +451,43 @@
   function macroMult(state) { return 1 + state.macro.cycleAmp * state.macro.cyclePhase; }
 
   // 2 -------------------------------------------------------------- DEMANDA
+  // peso de un estado en la demanda nacional de una industria = poblacion · gdp · afinidad
+  function stateWeight(state, regionId, industry) {
+    const r = state.regions.find(x => x.id === regionId);
+    if (!r) return 0;
+    return (r.population / 1e6) * r.gdpPerCapita * (r.demandMod[industry] || 1);
+  }
+  function nationalWeight(state, industry) {
+    let t = 0; for (const r of state.regions) t += (r.population / 1e6) * r.gdpPerCapita * (r.demandMod[industry] || 1);
+    return t || 1;
+  }
+  // ALCANCE: fraccion del mercado nacional que una empresa puede atender = suma de los estados
+  // donde opera (sede + tiendas) / peso nacional. Un entrante en un estado chico tiene alcance diminuto.
+  function reachMod(state, co, industry) {
+    const nat = nationalWeight(state, industry);
+    let w = stateWeight(state, co.region, industry);
+    if (co.outlets) for (let i = 0; i < co.outlets.length; i++) w += stateWeight(state, co.outlets[i], industry);
+    return clamp(w / nat, 0.001, 0.97);
+  }
+  // mantiene compatibilidad: factor regional para costos/inmobiliaria (no para share)
   function regionMod(state, regionId, industry) {
     const r = state.regions.find(x => x.id === regionId);
     if (!r) return 1;
-    return (0.7 + 0.3 * r.wealthIndex) * (r.demandMod[industry] || 1) * (0.85 + 0.15 * r.population / C.REF_POP);
+    return (0.7 + 0.3 * r.wealthIndex) * (r.demandMod[industry] || 1);
   }
   function mktMultiplier(spend, bonus) {
     const eff = C.MKT_MAX * spend / (spend + C.MKT_HALFSAT);
     return 1 + eff * (1 + (bonus || 0));
-  }
-  // alcance de mercado: la región sede + tiendas en otras regiones (rendimientos decrecientes, capeado 2.4×)
-  function reachMod(state, co, industry) {
-    let mult = 1;
-    if (co.outlets) for (let i = 0; i < co.outlets.length; i++) mult += 0.18 * regionMod(state, co.outlets[i], industry);
-    mult = clamp(mult, 1, 2.4);
-    return regionMod(state, co.region, industry) * mult;
   }
   function sellerAttr(state, s) {
     const qFactor = 1 + 0.15 * s.qualityLevel * s.fresh;
     const bFactor = 0.3 + s.brandStrength;
     const mFactor = mktMultiplier(s.marketingBudget, s.isPlayer ? state.tech.mktBonus : 0);
     const industry = state.products[s.productId].industry;
-    const rMod = (s.isPlayer && s.ref && s.ref.outlets && s.ref.outlets.length) ? reachMod(state, s.ref, industry) : regionMod(state, s.region, industry);
+    // ALCANCE nacional: jugador desde sus estados; competidor desde su footprint (reach)
+    const reach = s.isPlayer ? reachMod(state, s.ref, industry) : (s.ref.reach != null ? s.ref.reach : 0.1);
     const price = Math.max(s.price, 0.01);
-    let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * rMod / Math.pow(price, C.ATTR_B);
+    let A = Math.pow(qFactor, C.ATTR_A) * Math.pow(bFactor, C.ATTR_C) * mFactor * reach / Math.pow(price, C.ATTR_B);
     // precio de reserva: la demanda colapsa cuando el precio supera ~2× la referencia
     const ref = state.markets[s.productId] ? state.markets[s.productId].referencePrice : state.products[s.productId].refPrice;
     const ratio = price / Math.max(ref, 0.01);
@@ -574,9 +610,11 @@
       const rnd = co.rndBudget;
       // alquiler de tiendas retail en otras regiones (escala con el tamaño del mercado local)
       let outletRent = 0;
-      if (co.outlets) for (const rid of co.outlets) { const rr = state.regions.find(r => r.id === rid); if (rr) outletRent += rr.population / 1e6 * 1500 * m.inflationIndex; }
+      if (co.outlets) for (const rid of co.outlets) { const rr = state.regions.find(r => r.id === rid); if (rr) outletRent += rr.population / 1e6 * 800 * m.inflationIndex; }
       const revenue = co._revenueThisTick || 0;
-      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd - outletRent;
+      // overhead SG&A (distribucion/admin) proporcional a la venta, lleva el margen a niveles realistas
+      const sga = revenue * 0.05;
+      const contribution = revenue - prodCost - holdingCost - salaries - marketing - rnd - outletRent - sga;
       co.cashContribution = fin(contribution, 0);
       state.player.cash += co.cashContribution;
       state._quarterProfit += co.cashContribution;
@@ -585,7 +623,11 @@
       co.brandStrength = clamp(co.brandStrength + eff * 0.02 - C.BRAND_DECAY, 0, 1);
       // obsolescencia (tech/luxury): fresh decae salvo I+D de producto
       if (p.obs > 0) {
-        co.fresh = clamp(co.fresh - p.obs / 52 + state.tech.freshBonus * 0.0, 0.35, 1);
+        // la I+D de producto (freshBonus) frena la obsolescencia y refresca de a poco; el I+D activo también
+        const fb = clamp(state.tech.freshBonus, 0, 2);
+        const decay = p.obs / 52 * (1 - 0.4 * Math.min(1, fb));
+        const refresh = (co.rndBudget > 0 ? 0.004 : 0) + (fb > 0 ? 0.004 : 0);
+        co.fresh = clamp(co.fresh - decay + refresh, 0.35, 1);
       }
       // historial de ganancias
       co.profitHistory.push(co.cashContribution);
@@ -606,24 +648,25 @@
       const unitCost = (p.baseVarCost * m.inflationIndex + ic) * (1 - c.techEff);
       const revenue = c.lastSold * c.price;
       const fixedCost = c.fixedCost * m.inflationIndex;
-      const cost = fixedCost + unitCost * c.lastSold + c.marketingBudget + c.rndBudget;
-      const profit = revenue - cost;
+      // overhead (SG&A) lleva el margen al neto realista de la industria; al precio justo, neto ≈ netMargin
+      const overheadUnit = c.price * (targetGrossMargin(p.cat) - netMarginFor(p.cat));
+      const profit = c.lastSold * (c.price - unitCost - overheadUnit) - fixedCost;
       c.cash += profit;
       c.profitHist.push(profit); if (c.profitHist.length > 52) c.profitHist.shift();
       c.annualEarnings = c.profitHist.reduce((s, x) => s + x, 0) / c.profitHist.length * 52;
-      // ajuste de markup suavizado hacia target share
-      if (c.marketShare < c.targetShare) c.markup -= 0.004; else c.markup += 0.003;
-      const margin = c.price > 0 ? (c.price - unitCost) / c.price : 0;
-      const minMargin = c.profile === 'aggressive' ? 0.05 : c.profile === 'premium' ? 0.30 : 0.12;
-      if (margin < minMargin) c.markup += 0.006;
-      c.markup = clamp(c.markup, 0.04, 1.6);
-      const floor = unitCost * 1.03, ceil = p.refPrice * 3;
-      const desired = clamp(unitCost * (1 + c.markup), floor, ceil);
-      c.price += (desired - c.price) * 0.15;
+      // precio objetivo = costo / (1 - margen bruto típico de la industria) ± ajuste chico por share
+      let gm = targetGrossMargin(p.cat) + (c.profile === 'premium' ? 0.08 : c.profile === 'aggressive' ? -0.06 : 0);
+      gm = clamp(gm, 0.05, 0.55);
+      let desired = unitCost / Math.max(0.3, 1 - gm);
+      desired *= (c.marketShare < c.targetShare ? 0.985 : 1.01);
+      const floor = unitCost * 1.02, ceil = p.refPrice * 1.8;
+      desired = clamp(desired, floor, ceil);
+      c.price += (desired - c.price) * 0.12;
       c.price = clamp(c.price, floor, ceil);
-      // inversión / expansión según perfil y caja
-      if (c.lastDemand > c.capacity * 0.92 && c.cash > fixedCost * 25) {
-        const expand = c.capacity * 0.025;
+      // inversión / expansión según caja, CAPEADA a 2.5× su tamaño inicial y 35% del mercado
+      const expandCap = Math.min(p.baseDemand * 0.35, (c.capacity0 || c.capacity) * 2.5);
+      if (c.lastDemand > c.capacity * 0.92 && c.cash > fixedCost * 25 && c.capacity < expandCap) {
+        const expand = c.capacity * 0.02;
         c.capacity += expand; c.cash -= expand * 6;
       }
       if ((c.profile === 'premium' || c.profile === 'efficient') && c.cash > fixedCost * 20) {
@@ -649,11 +692,14 @@
         const alive = state.competitors.filter(c => c.productId === pid && !c.dead).length;
         const playerHere = state.companies.some(co => co.productId === pid);
         const margin = (market.lastClearingPrice - state.products[pid].baseVarCost * state.macro.inflationIndex) / Math.max(market.lastClearingPrice, 1);
-        if (alive < 5 && margin > 0.45 && rngNext(state) < 0.4) {
-          const c = makeCompetitor(state, pid, alive + rngInt(state, 0, 5));
+        // el éxito atrae entrantes: mercados rentables y concentrados (líder con mucho share)
+        const topShare = Math.max(0, ...state.companies.filter(co => co.productId === pid).map(co => co.marketShare),
+          ...state.competitors.filter(c => c.productId === pid && !c.dead).map(c => c.marketShare));
+        if (alive < (state.products[pid].nComp || 6) + 4 && margin > 0.35 && topShare > 0.35 && rngNext(state) < 0.35) {
+          const c = makeCompetitor(state, pid, alive + rngInt(state, 0, 9), rngRange(state, 0.008, 0.03));
           c.cash = c.fixedCost * 25;
           state.competitors.push(c);
-          if (playerHere) pushLog(state, 'Nuevo competidor ' + c.name + ' entró al mercado de ' + state.products[pid].name + '.', 'warn');
+          if (playerHere) pushLog(state, 'Nuevo competidor ' + c.name + ' entró al mercado de ' + state.products[pid].name + ' (rentable y concentrado).', 'warn');
         }
       }
       rebuildStocks(state);
@@ -663,10 +709,12 @@
   // 6 -------------------------------------------------------------- FINANZAS
   function stepFinance(state) {
     const pl = state.player;
-    // costo de complejidad: administrar muchas empresas escala super-lineal (la fricción
-    // crece con el tamaño del imperio). El primer negocio no paga overhead.
+    // costo de complejidad: administrar muchas empresas cuesta un % creciente de la
+    // facturación total (deseconomías de escala; un holding de 75 divisiones es ineficiente).
     if (state.companies.length > 1) {
-      const overhead = 1500 * Math.pow(state.companies.length - 1, 1.5) * state.macro.inflationIndex;
+      let totalRev = 0; for (const co of state.companies) totalRev += (co.lastRevenue || 0);
+      const rate = Math.min(0.15, 0.002 * (state.companies.length - 1));
+      const overhead = totalRev * rate;
       pl.cash -= overhead; state._quarterProfit -= overhead;
     }
     // intereses + amortización de préstamos
@@ -1030,7 +1078,7 @@
         if (r.id === co.region) return bad('Ya vendés en tu región sede.');
         if (!co.outlets) co.outlets = [];
         if (co.outlets.indexOf(r.id) >= 0) return bad('Ya tenés una tienda ahí.');
-        const openCost = r.population / 1e6 * 1500 * 52 * state.macro.inflationIndex; // ≈ un año de alquiler
+        const openCost = r.population / 1e6 * 800 * 26 * state.macro.inflationIndex; // ≈ medio año de alquiler
         if (pl.cash < openCost) return bad('Apertura USD ' + Math.round(openCost).toLocaleString('en'));
         pl.cash -= openCost; co.outlets.push(r.id);
         pushLog(state, 'Abriste tienda de ' + co.name + ' en ' + r.name + ' (alcance de mercado +).', 'good');

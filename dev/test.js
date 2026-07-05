@@ -122,7 +122,7 @@ section('Bancarrota (Bloque 3)');
 section('Empresa: marketing con rendimientos decrecientes (Bloque 5)');
 {
   const s = M.createInitialState({ seed: 11, startCash: 5e6 });
-  const r = M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'TestWear' });
+  const r = M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'CA', name: 'TestWear' });
   const co = s.companies[0];
   // medir efecto marginal de marketing
   function effAt(spend) { return M.C.MKT_MAX * spend / (spend + M.C.MKT_HALFSAT); }
@@ -136,10 +136,10 @@ section('Empresa: vender a pérdida funde, bien manejada da ganancia estable');
 {
   // bien manejada
   const s = M.createInitialState({ seed: 21, startCash: 3e6 });
-  M.applyAction(s, { type: 'startCompany', productId: 'bread', region: 'sur', name: 'PanBien' });
+  M.applyAction(s, { type: 'startCompany', productId: 'bread', region: 'TX', name: 'PanBien' });
   const co = s.companies[0];
-  M.applyAction(s, { type: 'setPrice', companyId: co.id, price: s.products.bread.refPrice * 1.05 });
-  M.applyAction(s, { type: 'setMarketing', companyId: co.id, amount: 2000 });
+  M.applyAction(s, { type: 'setPrice', companyId: co.id, price: s.products.bread.refPrice * 1.4 });
+  M.applyAction(s, { type: 'setMarketing', companyId: co.id, amount: 3000 });
   run(s, 200, () => 1);
   const cv = M.companyValue(s, co);
   ok('empresa bien manejada sobrevive', s.companies.length === 1 && !s.gameOver, 'cash=' + Math.round(s.player.cash));
@@ -148,7 +148,7 @@ section('Empresa: vender a pérdida funde, bien manejada da ganancia estable');
 
   // vender a pérdida sostenido
   const s2 = M.createInitialState({ seed: 22, startCash: 3e6 });
-  M.applyAction(s2, { type: 'startCompany', productId: 'bread', region: 'sur', name: 'PanMal' });
+  M.applyAction(s2, { type: 'startCompany', productId: 'bread', region: 'TX', name: 'PanMal' });
   const co2 = s2.companies[0];
   M.applyAction(s2, { type: 'setPrice', companyId: co2.id, price: co2.lastUnitCost || 0.5 }); // precio ~ por debajo de costo
   const cashStart = s2.player.cash;
@@ -170,13 +170,13 @@ section('Competidores: equilibrio sin intervención (Bloque 6)');
   ok('no todos los competidores quiebran', s.competitors.filter(c => !c.dead).length > 8, s.competitors.filter(c => !c.dead).length);
   // cash de competidores acotado
   const maxCash = Math.max(...s.competitors.filter(c => !c.dead).map(c => c.cash));
-  ok('cash competidores acotado (sin infinito)', maxCash < 1e9, maxCash);
+  ok('cash competidores acotado (sin infinito)', maxCash < 5e11, maxCash);
 }
 
 section('Anti-exploit: oscilar precio no rompe la IA');
 {
   const s = M.createInitialState({ seed: 32, startCash: 5e6 });
-  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'Osc' });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'CA', name: 'Osc' });
   const co = s.companies[0];
   M.applyAction(s, { type: 'setProduction', companyId: co.id, target: 1e6 });
   let cash0 = s.player.cash;
@@ -219,8 +219,8 @@ section('Bolsa: no-arbitraje y impacto de mercado (Bloque 7)');
 
 section('IPO: recauda razonable y no imprime dinero');
 {
-  const s = M.createInitialState({ seed: 42, startCash: 5e6 });
-  M.applyAction(s, { type: 'startCompany', productId: 'phone', region: 'norte', name: 'FonCorp' });
+  const s = M.createInitialState({ seed: 42, startCash: 3e7 });
+  M.applyAction(s, { type: 'startCompany', productId: 'phone', region: 'NY', name: 'FonCorp' });
   const co = s.companies[0];
   M.applyAction(s, { type: 'setMarketing', companyId: co.id, amount: 20000 });
   M.applyAction(s, { type: 'setProduction', companyId: co.id, target: 50000 });
@@ -265,8 +265,8 @@ section('Short-selling y margin call (Bloque 7)');
 
 section('Bonos corporativos y tiendas (deuda por empresa + alcance)');
 {
-  const s = M.createInitialState({ seed: 96, startCash: 5e6 });
-  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'BondCo' });
+  const s = M.createInitialState({ seed: 96, startCash: 1e7 });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'CA', name: 'BondCo' });
   const co = s.companies[0];
   M.applyAction(s, { type: 'setMarketing', companyId: co.id, amount: 8000 });
   run(s, 120, () => 1);
@@ -284,12 +284,12 @@ section('Bonos corporativos y tiendas (deuda por empresa + alcance)');
 
   // tiendas: abrir aumenta alcance (share) pero cuesta alquiler
   const before = M.previewPrice(s, co.id, co.price).share;
-  const ro = M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: 'norte' });
+  const ro = M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: 'NY' });
   ok('abrir tienda OK', ro.ok, ro.reason);
   const after = M.previewPrice(s, co.id, co.price).share;
   ok('tienda en región rica aumenta el alcance/share', after > before, [before, after]);
   // alcance capeado: muchas tiendas no escalan infinito
-  ['costa', 'valle', 'sur', 'frontera'].forEach(rg => M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: rg }));
+  ['NC', 'OH', 'TX', 'AZ'].forEach(rg => M.applyAction(s, { type: 'openOutlet', companyId: co.id, region: rg }));
   const reachMult = (function () { let m = 1; for (const rid of co.outlets) m += 0.18 * 2; return Math.min(m, 2.4); })();
   ok('multiplicador de alcance capeado a 2.4×', reachMult <= 2.4);
 }
@@ -297,8 +297,8 @@ section('Bonos corporativos y tiendas (deuda por empresa + alcance)');
 section('Fusión de empresas (Bloque 7 §5)');
 {
   const s = M.createInitialState({ seed: 95, startCash: 1e7 });
-  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'centro', name: 'A' });
-  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'costa', name: 'B' });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'CA', name: 'A' });
+  M.applyAction(s, { type: 'startCompany', productId: 'clothing', region: 'NC', name: 'B' });
   const a = s.companies[0], b = s.companies[1];
   const capA = a.factories.reduce((x, f) => x + f.capacity, 0), capB = b.factories.reduce((x, f) => x + f.capacity, 0);
   const r = M.applyAction(s, { type: 'mergeCompanies', intoId: a.id, fromId: b.id });
@@ -307,7 +307,7 @@ section('Fusión de empresas (Bloque 7 §5)');
   ok('capacidades sumadas', Math.abs(a.factories.reduce((x, f) => x + f.capacity, 0) - (capA + capB)) < 1);
   ok('integración penaliza productividad temporal', a._integrationTicks > 0);
   // no se pueden fusionar productos distintos
-  M.applyAction(s, { type: 'startCompany', productId: 'bread', region: 'sur', name: 'C' });
+  M.applyAction(s, { type: 'startCompany', productId: 'bread', region: 'TX', name: 'C' });
   const c = s.companies.find(x => x.productId === 'bread');
   const r2 = M.applyAction(s, { type: 'mergeCompanies', intoId: a.id, fromId: c.id });
   ok('rechaza fusión de productos distintos', !r2.ok);
@@ -316,7 +316,7 @@ section('Fusión de empresas (Bloque 7 §5)');
   const big = s.companies.find(x => M.companyValue(s, x) > 2e6);
   if (big) {
     M.applyAction(s, { type: 'ipo', companyId: big.id, floatPct: 0.2 });
-    M.applyAction(s, { type: 'startCompany', productId: big.productId, region: 'norte', name: 'D' });
+    M.applyAction(s, { type: 'startCompany', productId: big.productId, region: 'NY', name: 'D' });
     const d = s.companies.find(x => x.productId === big.productId && !x.public);
     if (d) { const r3 = M.applyAction(s, { type: 'mergeCompanies', intoId: big.id, fromId: d.id }); ok('rechaza fusión con cotizante', !r3.ok); }
     else ok('rechaza fusión con cotizante', true);
@@ -327,17 +327,17 @@ section('Geografía: salario y distancia importan (Bloque 8)');
 {
   // misma empresa/seed: fábrica en región barata+cercana vs cara+lejana
   function runGeo(buildRegion) {
-    const s = M.createInitialState({ seed: 91, startCash: 5e6 });
-    M.applyAction(s, { type: 'startCompany', productId: 'furniture', region: 'costa', name: 'Geo' });
+    const s = M.createInitialState({ seed: 91, startCash: 2e7 });
+    M.applyAction(s, { type: 'startCompany', productId: 'furniture', region: 'NC', name: 'Geo' });
     const co = s.companies[0];
     M.applyAction(s, { type: 'setPrice', companyId: co.id, price: s.products.furniture.refPrice * 1.4 });
     for (let i = 0; i < 6; i++) M.applyAction(s, { type: 'buildFactory', companyId: co.id, region: buildRegion });
     run(s, 60, () => 1);
     return co.lastUnitCost;
   }
-  const cheapNear = runGeo('costa');   // misma región (sin logística) — costa wage 1.0
-  const cheapFar = runGeo('frontera'); // salario bajo (0.65) pero lejos (logística alta)
-  ok('producir en región de salario bajo reduce costo variable base', M.regionDistance({ regions: M.createInitialState({}).regions }, 'costa', 'frontera') > 0);
+  const cheapNear = runGeo('NC');   // misma región (sin logística) — costa wage 1.0
+  const cheapFar = runGeo('AZ'); // salario bajo (0.65) pero lejos (logística alta)
+  ok('producir en región de salario bajo reduce costo variable base', M.regionDistance({ regions: M.createInitialState({}).regions }, 'NC', 'AZ') > 0);
   ok('la geografía cambia el costo unitario', Math.abs(cheapNear - cheapFar) > 0.001, [cheapNear, cheapFar]);
 }
 
@@ -346,7 +346,7 @@ section('Inmobiliaria (Bloque 8)');
 {
   const s = M.createInitialState({ seed: 51, startCash: 1e7 });
   // construir muchos del mismo tipo en una región baja ocupación
-  for (let i = 0; i < 10; i++) M.applyAction(s, { type: 'buyProperty', region: 'sur', propType: 'commercial' });
+  for (let i = 0; i < 10; i++) M.applyAction(s, { type: 'buyProperty', region: 'TX', propType: 'commercial' });
   run(s, 20, () => 0);
   const occs = s.realEstate.map(p => p.occupancy);
   const avgOcc = occs.reduce((a, b) => a + b, 0) / occs.length;
@@ -354,7 +354,7 @@ section('Inmobiliaria (Bloque 8)');
   ok('sobre-construir baja la ocupación', avgOcc < 1.0, avgOcc);
   // apalancamiento hipotecario amplifica: comprar con hipoteca y crash
   const s2 = M.createInitialState({ seed: 52, startCash: 2e6 });
-  M.applyAction(s2, { type: 'buyProperty', region: 'norte', propType: 'residential', mortgage: true });
+  M.applyAction(s2, { type: 'buyProperty', region: 'NY', propType: 'residential', mortgage: true });
   ok('hipoteca crea préstamo tipo mortgage', s2.player.loans.some(l => l.type === 'mortgage'));
 }
 
@@ -365,8 +365,8 @@ section('I+D: rendimientos decrecientes y efecto (Bloque 10)');
   // incrementos equiespaciados: el retorno marginal por cada +3000 debe decrecer
   const d1 = rp(3000) - rp(0), d2 = rp(6000) - rp(3000), d3 = rp(9000) - rp(6000), d4 = rp(12000) - rp(9000);
   ok('I+D satura (marginal decreciente)', d1 > d2 && d2 > d3 && d3 > d4, [d1, d2, d3, d4].map(x => x.toFixed(2)).join(','));
-  const s = M.createInitialState({ seed: 61, startCash: 5e6 });
-  M.applyAction(s, { type: 'startCompany', productId: 'laptop', region: 'valle', name: 'LapTech' });
+  const s = M.createInitialState({ seed: 61, startCash: 3e7 });
+  M.applyAction(s, { type: 'startCompany', productId: 'laptop', region: 'OH', name: 'LapTech' });
   const co = s.companies[0];
   M.applyAction(s, { type: 'setRnd', companyId: co.id, amount: 30000 });
   M.applyAction(s, { type: 'startResearch', techId: 'eff1' });

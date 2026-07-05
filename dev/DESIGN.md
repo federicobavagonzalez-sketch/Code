@@ -411,3 +411,155 @@ netWorth comprando las propias acciones); IPO→recompra no imprime dinero; flip
 inmobiliario instantáneo pierde por costos de transacción; precio de reserva
 hace que sobreprecar (>2× ref) colapse la demanda (no se puede vivir de vender
 poquísimo a margen enorme); oscilar el precio no explota la IA (suavizada).
+
+====================================================================
+# v2 — EXPANSIÓN (Bloques 2–7): EE.UU., bolsa real, M&A, inmobiliaria, club, naciones
+====================================================================
+
+## V2.1 GEOGRAFÍA: ESTADOS DE EE.UU. (Bloque 2)
+`state.regions[]` ahora contiene 12 ESTADOS de EE.UU. (la UI dice "estado"). Cada
+uno: id, name, population (millones reales aprox), gdpPerCapita (relativo),
+wageLevel, landPrice, taxRate, industryAffinity{industria→mult}, saturation.
+Datos: CA 39M, TX 30M, FL 22M, NY 19.5M, IL 12.6M, PA 12.9M, OH 11.8M, GA 11M,
+NC 10.7M, MI 10M, WA 7.8M, AZ 7.4M. TX/FL sin impuesto a la renta (taxRate bajo);
+CA/NY/WA gdp y wage altos; afinidades: CA→tech, MI→automotriz, TX→energía,
+NY→finanzas, WA→tech, etc.
+
+## V2.2 MERCADO NACIONAL REALISTA (Bloque 2) — recalibración crítica
+PROBLEMA previo: se ganaba ~$5M/sem con 30% del mercado automotriz (irreal).
+SOLUCIÓN: separar TAMAÑO DE MERCADO (nacional) de TAMAÑO DE PLANTA (absoluto).
+
+- `baseDemand` = demanda NACIONAL (unidades/semana), suma sobre estados:
+  autos ~330.000/sem (17M/año), celulares ~2.900.000/sem (150M/año), pan y
+  consumo masivo en decenas/cientos de millones/sem. Se reparte por estado según
+  `population·gdpPerCapita·industryAffinity`.
+- `plantCap` = capacidad de UNA fábrica (unidades/sem), ABSOLUTA por producto
+  (una automotriz hace ~2.500 autos/sem por planta; una panadería ~40k panes).
+  El share de un entrante = plantCap / baseDemand → DIMINUTO (<1%) en mercados
+  nacionales grandes. Esto es lo correcto y deseado.
+- `plantCost` = capital para construir una planta, ABSOLUTO y realista por
+  industria → barrera de entrada. Heavy/tech (autos, chips, autos) piden capital
+  masivo (gating por capital+score). Food/retail/indie son baratas y accesibles
+  desde el arranque en un solo estado.
+- MÁRGENES por industria (realistas): retail/consumo masivo 2–5%, autos 5–8%,
+  electrónica 8–12%, lujo 25–40%, software/tech alto. Se modela vía
+  `baseVarCost/refPrice` por producto.
+- COMPETENCIA DENSA: 6–12 competidores por industria importante, capacidades
+  dispares que SUMAN ~baseDemand: 1–2 gigantes (15–25% c/u), varios medianos
+  (3–8%), muchos chicos (<2%). Un entrante "ni figura" hasta escalar mucho.
+
+TABLA DE REFERENCIA (objetivo, se afina con tests): a nivel nacional, ganancia
+semanal ≈ share · baseDemand · refPrice · margenNeto. Ej. autos: mercado
+≈330k·$28k = $9.2B/sem; con 1% share y 6% margen ≈ $5.5M/sem (¡1% ya son
+millones!); 20% share ≈ >$100M/sem (ser un coloso). Ganar $5M/sem en autos
+corresponde a ~1% share, NO a 30%.
+
+ESCALA DE ETAPAS revisada (netWorth): PyME >$1M, Empresario >$50M, Corporación
+>$2.000M, Magnate >$200.000M, Trillonario >$1e12 (exige dominar VARIOS mercados).
+
+## V2.3 BOLSA REALISTA Y CONTROL ACCIONARIO (Bloque 3)
+- `sharesOutstanding` fijo por empresa cotizante; `ownershipPct = owned/SO`.
+- Hitos: ≥25% accionista relevante (ve finanzas detalladas); **≥51% = DUEÑO** →
+  la empresa se transfiere a `state.companies` (el jugador la gestiona) y se DEJA
+  de contar como acciones en netWorth (evita doble conteo); el 49% restante paga
+  dividendos a terceros (sumidero menor); 100% = sin dividendos a terceros, puede
+  deslistar. No se pueden poseer más acciones que las existentes.
+- Precio = fundamental (`EPS·peMultiple + bookValuePerShare·0.6`) con convergencia
+  0.1 + ruido ±1–2%. peMultiple realista por industria, sube en boom/baja en
+  recesión. Capitalización = price·SO (gigantes valen cientos de miles de M →
+  comprar 51% cuesta miles de M).
+- Slippage: `priceImpact = k·orderSize/SO` (75% temporal). Acumular hasta 51%
+  encarece progresivamente.
+- TENDER OFFER (`tenderOffer`): oferta formal por % objetivo a un precio/acción.
+  Se acepta si precio ≥ mercado·(1+primaRequerida) (prima 20–40% según tamaño).
+  Rápido y limpio pero pagás prima sobre todo el paquete. Muestra mercado, prima,
+  costo total y si sería aceptada antes de confirmar.
+- Dividendos: `annualEarnings·payoutRatio/SO`; yield 1–5%, SIEMPRE < retorno
+  operativo y < costo de préstamos (no-arbitraje; piso loanRate 5.5% > yield).
+
+## V2.4 ADQUISICIONES DE EMPRESAS ENTERAS Y MONOPOLIO (Bloque 4)
+- Empresa PRIVADA: oferta en efectivo; se acepta si ≥ valuación·(1+prima 20–40%).
+- Empresa COTIZANTE: vía 51% acumulado o tender offer (Bloque 3).
+- Al adquirir, se transfiere TODO (fábricas, productos, share, marca, empleados,
+  estados) a `state.companies`; integración con `_integrationTicks` (−productividad
+  unas semanas). Fusión con empresa propia del mismo rubro: sinergias capeadas.
+- PODER DE MERCADO: share nacional del rubro alto → puede subir precios con menos
+  castigo de demanda (penalización de elasticidad reducida): a >50–60% share,
+  `effElasticity = elasticity·(1 − 0.4·(share−0.5))` acotado; a >80% monopolio.
+- FRICCIÓN: a mayor concentración (HHI/share propio) sube la prob. de eventos
+  regulatorios (multa, desinversión, tope de precios) y la entrada de nuevos
+  competidores en rubros rentables y concentrados. El monopolio es rentable pero
+  disputado, no terminal.
+- netWorth refleja activos+ganancias reales (sin crear valor por # de empresas).
+  Comprar y revender al instante pierde (prima + fricción).
+
+## V2.5 INMOBILIARIA AMPLIADA (Bloque 5)
+Tipos de proyecto (cada uno: cost, buildTicks, rent, occupancy, riesgo): casa,
+edificio, complejo, rascacielos de lujo; local, strip mall, shopping, torre de
+oficinas; galpón, parque industrial, centro de distribución; hotel boutique,
+resort; megaproyectos (uso mixto, urbanización, estadio/arena).
+Ciclo: `phase` land → building (buildTicksRemaining: solo costos) → operating
+(renta·occupancy − maintenance). Ocupación por oferta/demanda del estado.
+Estrategias: renta, desarrollo+venta (valor por obra, no flip gratis),
+apreciación, apalancamiento hipotecario (amplifica pérdidas; crash → patrimonio
+negativo). landPrice sube con construcción, baja con sobreoferta (burbuja).
+Megaproyectos elevan el valor de su zona. Flip instantáneo NO rentable.
+
+## V2.6 CLUB DE FÚTBOL INGLÉS (Bloque 6) — industria estrella
+Nombres ficticios. Pirámide de 5 divisiones (Nivel 5 semi-amateur → Nivel 1
+elite). El club es una empresa más (`state.football` + entrada en companies para
+netWorth). 1 temporada = 38 ticks; al cierre, posición según teamStrength vs
+rivales + varianza seedeada; ascenso/descenso.
+`teamStrength` = f(plantel(ability), DT, academia, instalaciones, moral).
+PLANTEL: jugadores {ability, potential, value, wage, age, contract, morale};
+ventanas de fichajes; comprar (fee + salario), vender (fee = ingreso), desarrollar
+juveniles (comprar barato → vender caro), envejecen y pierden nivel.
+ECONOMÍA (panel "de dónde sale y a dónde va"):
+  FUENTES: derechos de TV/premios (ESCALAN MUCHÍSIMO por división — Nivel 1 paga
+  un orden de magnitud más), entradas (capacidad·ocupación·precio), abonos,
+  merchandising (marca), patrocinios, premios de copa, ventas de jugadores,
+  aporte del dueño.
+  GASTOS: salarios jugadores (mayor), staff/DT, fees, mantenimiento estadio,
+  academia/instalaciones, operación, deuda.
+Palancas del dueño: presupuesto de fichajes y techo salarial, comprar/vender,
+contratar DT, invertir academia/instalaciones, ampliar estadio (megaproyecto),
+precios de entradas, sponsors, inyectar/retirar capital, ambición.
+Hinchada/marca crece con éxito; baja con malos resultados/precios abusivos.
+Fair play financiero: no gastar infinito > ingresos sin sanción.
+ANTI-EXPLOIT: salarios sin ingresos funden; vender todo desciende; la fuerza
+deportiva viene de inversión sostenida, no de un botón; no domina el balance del
+imperio (exige reinversión, como en la realidad).
+
+## V2.7 NACIONES — FILANTROPÍA (Bloque 7)
+`state.nations[]`: variedad de países (desarrollados/emergentes/bajos ingresos)
+con gdp, gdpPerCapita, population, poverty%, healthIndex, educationIndex,
+developmentLevel(0..100), totalReceived. Acción `donate(countryId, area, amount)`
+(area: salud/educación/pobreza/general). Efecto GRADUAL con rendimientos
+decrecientes (países pobres rinden más por dólar). Sin ayuda, derivan lento.
+Donar es SUMIDERO real (no vuelve como ganancia) → objetivo de "legado"; da
+reputación filantrópica (`player.philanthropy`) con beneficios suaves (marca).
+Objetivo de legado paralelo a trillonario.
+
+## V2.8 EVENTOS NO INTRUSIVOS (Bloque 7)
+Los eventos ya NO abren modal a pantalla completa que pausa todo. `state.event`
+pasa a `state.pendingEvents[]` (bandeja). Un indicador discreto en el header
+(campana con contador). El jugador entra a "Decisiones" cuando quiere y resuelve.
+El tiempo NO se fuerza a pausa; opcionalmente el jugador pausa. Se mantienen las
+decisiones ramificadas y efectos; solo cambia la presentación.
+
+## V2.9 FUENTES Y SUMIDEROS (actualizado)
+FUENTES: ventas (share·demanda nacional·precio), dividendos de % <51%, alquileres
+inmobiliarios, ventas de empresas/acciones/jugadores, IPO, préstamos/bonos,
+TV/entradas/sponsors/merchandising del club, interés sobre cash.
+SUMIDEROS: costos producción (fijo+variable+logística+overhead complejidad),
+holding, salarios (empresas y club), marketing, I+D, intereses+cuotas+bonos,
+compra de empresas/acciones/inmuebles (+prima+slippage+comisión), fees de
+fichajes, mantenimiento (fábricas/estadio/academia/inmuebles), impuestos
+(estatales), seguros, alquiler de tiendas, DONACIONES a naciones, inflación del
+cash ocioso. Balance: juego pasivo erosiona; crecer exige decisiones activas.
+
+## V2.10 SAVE VERSIONADO
+SAVE_KEY → `magnate_save_v2`. Saves v1 (forma de state distinta) se descartan
+limpio (aviso en UI), nueva partida. State sigue 100% serializable y determinista
+por seed. Orden de tick fijo (se agregan pasos: club temporada, naciones,
+inmobiliaria por fases — todos dentro del orden documentado).

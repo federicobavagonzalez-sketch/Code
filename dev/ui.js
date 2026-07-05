@@ -4,7 +4,7 @@
   'use strict';
   var E = window.MAGNATE;
   var S = null, speed = 0, timer = null, active = 'dash', coView = null, toastT = null, victoryShown = false;
-  var SAVE_KEY = 'magnate_save_v1';
+  var SAVE_KEY = 'magnate_save_v2';
 
   // ----------------------------------------------------------------- utilidades
   function el(id) { return document.getElementById(id); }
@@ -299,7 +299,7 @@
       '<div class="sm muted">Vendés en <b>' + esc(hr ? hr.name : co.region) + '</b> + tus tiendas. Más tiendas = más alcance (capeado), con alquiler semanal.</div>' +
       (outRegions.length ? outRegions.map(function (r) { return '<div class="srow sm"><span>🏬 ' + esc(r.name) + '</span><span class="muted">alquiler ' + fmtUSD(r.population / 1e6 * 1500 * S.macro.inflationIndex) + '/sem</span><button class="btn ghost" style="padding:4px 8px;min-height:0" onclick="MG.closeOutlet(\'' + co.id + '\',\'' + r.id + '\')">Cerrar</button></div>'; }).join('') : '<div class="sm muted">Sin tiendas fuera de la sede.</div>') +
       (avail.length ? '<div class="row"><select id="i_outreg" onchange="MG.outletPrev(\'' + co.id + '\')">' + avail.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' — pob ' + (r.population / 1e6).toFixed(1) + 'M, riqueza ' + r.wealthIndex.toFixed(2) + '</option>'; }).join('') + '</select></div>' +
-        '<button class="btn ghost" id="outBtn" onclick="MG.openOutlet(\'' + co.id + '\')">Abrir tienda (' + fmtUSD(avail[0].population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')</button>' : '') + '</div>';
+        '<button class="btn ghost" id="outBtn" onclick="MG.openOutlet(\'' + co.id + '\')">Abrir tienda (' + fmtUSD(avail[0].population / 1e6 * 800 * 26 * S.macro.inflationIndex) + ')</button>' : '') + '</div>';
 
     // integración + corporativo + financiamiento
     var mergeable = S.companies.filter(function (c) { return c.id !== co.id && c.productId === co.productId && !c.public; });
@@ -320,8 +320,8 @@
     if (!pv) return '';
     return '↳ estimado: ~' + fmtNum(pv.sellable) + ' u/sem · share ~' + pct(pv.share) + ' · resultado bruto ~<span class="' + (pv.profitEst >= 0 ? 'good' : 'bad') + '">' + fmtUSD(pv.profitEst) + '/sem</span>';
   }
-  function facCap(p) { return Math.max(10, p.baseDemand * 0.1); }
-  function facCost(p, rid) { var r = S.regions.find(function (x) { return x.id === rid; }); return Math.max(4000, facCap(p) * p.refPrice * 0.2 * (r ? r.landPrice : 1)); }
+  function facCap(p) { return p.plantCap || Math.max(10, p.baseDemand * 0.0005); }
+  function facCost(p, rid) { var r = S.regions.find(function (x) { return x.id === rid; }); return (p.plantCost || facCap(p) * p.refPrice * 0.5) * (0.7 + 0.3 * (r ? r.landPrice : 1)); }
 
   // --------------------------------------------------------------------- MERCADO
   function viewMercado() {
@@ -446,7 +446,7 @@
     }
 
     h += '<div class="card"><div class="ttl">Bienes raíces</div>' +
-      '<div class="row"><span class="lbl">Región</span><select id="i_rereg">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
+      '<div class="row"><span class="lbl">Estado</span><select id="i_rereg">' + S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' (tierra ' + r.landPrice.toFixed(2) + ')</option>'; }).join('') + '</select></div>' +
       '<div class="row"><span class="lbl">Tipo</span><select id="i_retype"><option value="residential">Residencial</option><option value="commercial">Comercial</option><option value="industrial">Industrial</option><option value="land">Terreno</option></select></div>' +
       '<label class="chk"><input type="checkbox" id="i_remort" checked> Financiar con hipoteca (25% de anticipo)</label>' +
       '<button class="btn pri" onclick="MG.buyProp()">Comprar propiedad</button></div>';
@@ -514,7 +514,7 @@
     var regs = S.regions.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + ' — salario ' + r.wageLevel.toFixed(2) + ', tierra ' + r.landPrice.toFixed(2) + '</option>'; }).join('');
     modal('Crear empresa',
       '<div class="row"><span class="lbl">Producto</span><select id="c_prod" onchange="MG.createCost()">' + opts + '</select></div>' +
-      '<div class="row"><span class="lbl">Región</span><select id="c_reg" onchange="MG.createCost()">' + regs + '</select></div>' +
+      '<div class="row"><span class="lbl">Estado</span><select id="c_reg" onchange="MG.createCost()">' + regs + '</select></div>' +
       '<div class="row"><span class="lbl">Nombre</span><input type="text" id="c_name" value="Mi Empresa"></div>' +
       '<label class="chk"><input type="checkbox" id="c_vert"> Integración vertical (−30% costo de insumos)</label>' +
       '<div class="sm muted" id="c_cost"></div>',
@@ -678,7 +678,7 @@
     openBond: openBond, doBond: doBond,
     openOutlet: function (id) { act({ type: 'openOutlet', companyId: id, region: (el('i_outreg') || {}).value }); },
     closeOutlet: function (id, rid) { act({ type: 'closeOutlet', companyId: id, region: rid }); },
-    outletPrev: function (id) { var r = S.regions.find(function (x) { return x.id === (el('i_outreg') || {}).value; }); var b = el('outBtn'); if (b && r) b.textContent = 'Abrir tienda (' + fmtUSD(r.population / 1e6 * 1500 * 52 * S.macro.inflationIndex) + ')'; },
+    outletPrev: function (id) { var r = S.regions.find(function (x) { return x.id === (el('i_outreg') || {}).value; }); var b = el('outBtn'); if (b && r) b.textContent = 'Abrir tienda (' + fmtUSD(r.population / 1e6 * 800 * 26 * S.macro.inflationIndex) + ')'; },
     sellco: function (id) { if (confirm('¿Vender esta empresa?')) { act({ type: 'sellCompany', companyId: id }); coView = null; render(); } },
     acquire: function (id) { act({ type: 'acquire', competitorId: id }); },
     takeLoan: function () { act({ type: 'takeLoan', amount: num('i_loan'), loanType: el('i_ltype').value, termTicks: parseInt(el('i_lterm').value, 10) }); },
