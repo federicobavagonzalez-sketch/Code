@@ -111,6 +111,16 @@ export const TUNING = {
   GYM_FEE: [80, 150, 300, 600],
   NUTRITIONIST_FEE: 120,
 
+  // Coach: niveles con costo inicial + fee semanal + multiplicador de entrenamiento.
+  COACH_LEVELS: [
+    { name: 'Gym de barrio', mult: 0.8, weekly: 80, cost: 0 },
+    { name: 'Coach con experiencia', mult: 1.0, weekly: 180, cost: 1500 },
+    { name: 'Coach de primer nivel', mult: 1.15, weekly: 350, cost: 8000 },
+    { name: 'Equipo de élite', mult: 1.3, weekly: 700, cost: 30000 },
+  ],
+  NUTRITION_CUT_RELIEF: 0.7,   // multiplica el exceso de corte (menos castigo y menos riesgo)
+  MANAGER_PURSE_BOOST: 1.12,   // el manager negocia bolsas un poco mejores
+
   // ---- Mentales (eventos) ----
   CONF_STEP: 4,
   MENTAL: { iqPerFight: 0.6, gritSurvive: 1.2, gritWarWin: 2.0 },

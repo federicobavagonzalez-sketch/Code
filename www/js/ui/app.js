@@ -1,6 +1,7 @@
 // app.js — bootstrap, router y render de pantallas. Se apoya en el engine ya probado.
 
-import { createCareer, advanceWeek, startFight, finishFight, endCareer } from '../engine/career.js';
+import { createCareer, advanceWeek, startFight, finishFight, endCareer, upgradeCoach, setNutritionist, setManager } from '../engine/career.js';
+import { weeklyCosts } from '../engine/economy.js';
 import { serializeCareer, deserializeCareer } from '../engine/save.js';
 import { saveGame, loadGame, hasSave, clearGame } from '../platform/storage.js';
 import { hitLight, hitHeavy, ko as hapticKO } from '../platform/haptics.js';
@@ -161,7 +162,16 @@ function dateLabel() {
 function wireHub() {
   on('.tabbar [data-tab]', 'click', e => routeHub(e.currentTarget.dataset.tab));
   if (state.tab === 'semana') wireWeek();
-  if (state.tab === 'ranking') { /* estatico */ }
+  if (state.tab === 'perfil') wireProfile();
+}
+
+function wireProfile() {
+  on('#coach', 'click', async () => { const r = upgradeCoach(state.career); if (!r.ok && r.reason === 'sin plata') alert('No te alcanza la plata.'); await persist(); routeHub('perfil'); });
+  on('#nutri', 'click', async () => { setNutritionist(state.career, !state.career.player.hasNutritionist); await persist(); routeHub('perfil'); });
+  on('#manager', 'click', async () => { setManager(state.career, !state.career.player.hasManager); await persist(); routeHub('perfil'); });
+  on('#retire', 'click', async () => {
+    if (confirm('¿Colgar los guantes? No hay vuelta atrás.')) { endCareer(state.career, 'voluntario'); await clearGame(); routeSummary(); }
+  });
 }
 
 // ---- pestaña SEMANA (fuera de camp) ----
@@ -363,6 +373,7 @@ function profileTab() {
       <div class="stat-line"><span class="l">Nivel</span><span class="v">${tierName}</span></div>
       <div class="stat-line"><span class="l">Base</span><span class="v">${archLabel(p.archetype)}</span></div>
     </div>
+    ${teamSection()}
     <div class="card">
       <div class="section-label">Últimas peleas</div>
       ${lastFights}
@@ -373,6 +384,29 @@ function profileTab() {
 
 function methodLabel(m) {
   return { ko: 'KO', tko: 'TKO', doctor: 'TKO médico', submission: 'sumisión', unanimous: 'decisión unánime', split: 'decisión dividida', majority: 'decisión mayoritaria', draw: 'empate' }[m] || m;
+}
+
+function teamSection() {
+  const p = state.career.player;
+  const levels = TUNING.COACH_LEVELS;
+  const cur = levels[p.coachLevel];
+  const next = levels[p.coachLevel + 1];
+  const costs = weeklyCosts(p);
+  const coachBtn = next
+    ? `<button class="btn btn-block" id="coach" ${p.bankroll < next.cost ? 'disabled' : ''}>Subir a ${esc(next.name)} — ${moneyStr(next.cost)}</button>`
+    : `<div class="faint center">Ya tenés el mejor equipo.</div>`;
+  return `
+    <div class="card">
+      <div class="section-label">Equipo — costos semanales: ${moneyStr(costs.total)}</div>
+      <div class="attr-row"><span class="attr-name">Coach</span><span class="attr-val" style="font-size:.85rem">${esc(cur.name)} · ${moneyStr(cur.weekly)}/sem</span></div>
+      ${coachBtn}
+      <div class="divider"></div>
+      <div class="attr-row"><span class="attr-name">Nutricionista</span><span class="attr-val" style="font-size:.85rem">${p.hasNutritionist ? 'contratado' : 'no'} · ${moneyStr(TUNING.NUTRITIONIST_FEE)}/sem</span></div>
+      <button class="btn btn-block" id="nutri">${p.hasNutritionist ? 'Dar de baja al nutricionista' : 'Contratar nutricionista (mejora el corte de peso)'}</button>
+      <div class="divider"></div>
+      <div class="attr-row"><span class="attr-name">Manager</span><span class="attr-val" style="font-size:.85rem">${p.hasManager ? 'contratado' : 'no'} · ${Math.round(TUNING.MANAGER_PCT * 100)}% de la bolsa</span></div>
+      <button class="btn btn-block" id="manager">${p.hasManager ? 'Dar de baja al manager' : 'Contratar manager (mejores ofertas)'}</button>
+    </div>`;
 }
 
 // ================= FIGHT =================

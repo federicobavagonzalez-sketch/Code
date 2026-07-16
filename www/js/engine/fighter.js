@@ -127,7 +127,8 @@ export function effectiveForFight(f, currentWeek, cutContext) {
   // Corte de peso del dia
   let sizeEdge = 0, startFatiguePenalty = 0;
   if (cutContext) {
-    const overSafe = Math.max(0, cutContext.cutFrac - TUNING.SAFE_FRAC);
+    const relief = cutContext.relief != null ? cutContext.relief : 1.0;
+    const overSafe = Math.max(0, cutContext.cutFrac - TUNING.SAFE_FRAC) * relief;
     const discFactor = 2 - ment.discipline / 100;
     phys.cardio -= overSafe * TUNING.CUT_CARDIO_K * discFactor;
     phys.chin -= overSafe * TUNING.CUT_CHIN_K * discFactor;

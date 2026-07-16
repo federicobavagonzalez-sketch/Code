@@ -45,8 +45,8 @@ export function managerCut(income) {
 
 // Costos semanales del jugador.
 export function weeklyCosts(f) {
-  const tier = f.promotionTier;
-  const gym = TUNING.GYM_FEE[tier] || 0;
+  const lvl = TUNING.COACH_LEVELS[f.coachLevel || 0];
+  const gym = lvl.weekly;
   const nutrition = f.hasNutritionist ? TUNING.NUTRITIONIST_FEE : 0;
   const living = TUNING.LIVING_COST;
   return { gym, nutrition, living, total: gym + nutrition + living };

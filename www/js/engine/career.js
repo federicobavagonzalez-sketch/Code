@@ -40,7 +40,8 @@ export function createCareer(seed, opts = {}) {
     currentWeek: 0,
     ageInit: opts.ageInit || 19,
   }, world.rng);
-  player.coachMult = 0.8; // gym de barrio
+  player.coachLevel = 0;
+  player.coachMult = TUNING.COACH_LEVELS[0].mult; // gym de barrio
   player.contractPromoterId = 0;
   player.promotionTier = 0;
   // amateur crudo: elo bajo fijo (aunque sea atletico, su tecnica es de barrio).
@@ -74,8 +75,8 @@ function refreshOffers(career) {
   }
   const offers = [];
   const pick = (arr) => arr.length ? arr[world.rng.int(0, arr.length - 1)] : null;
-  // 1-2 ofertas razonables
-  const nOffers = world.rng.int(1, 2);
+  // 1-2 ofertas razonables (el manager consigue una más)
+  const nOffers = world.rng.int(1, 2) + (player.hasManager ? 1 : 0);
   for (let i = 0; i < nOffers; i++) {
     const opp = pick(near.length ? near : pool);
     if (opp) offers.push(makeOffer(career, opp, false));
@@ -97,7 +98,8 @@ function refreshOffers(career) {
 
 function makeOffer(career, opp, isTitle) {
   const { player } = career;
-  const purse = computePurse(player.promotionTier, player.ratingElo);
+  let purse = computePurse(player.promotionTier, player.ratingElo);
+  if (player.hasManager) purse = Math.round(purse * TUNING.MANAGER_PURSE_BOOST);
   return {
     id: _offerId++,
     opponentId: opp.id,
@@ -125,12 +127,13 @@ function buildCutContext(career) {
   const div = TUNING.DIVISIONS.find(d => d.id === camp.cutDivisionId);
   const cutKg = Math.max(0, player.naturalWeightKg - div.limit);
   const cutFrac = cutKg / player.naturalWeightKg;
+  const relief = player.hasNutritionist ? TUNING.NUTRITION_CUT_RELIEF : 1.0;
   let missed = false;
   if (cutFrac > TUNING.SAFE_FRAC) {
-    const pMiss = clamp((cutFrac - TUNING.SAFE_FRAC) / (TUNING.MAX_FRAC - TUNING.SAFE_FRAC) * (1.5 - player.ment.discipline / 100), 0, 0.9);
+    const pMiss = clamp((cutFrac - TUNING.SAFE_FRAC) / (TUNING.MAX_FRAC - TUNING.SAFE_FRAC) * (1.5 - player.ment.discipline / 100) * relief, 0, 0.9);
     missed = world.rng.chance(pMiss);
   }
-  return { cutFrac, missedWeight: missed, divisionId: camp.cutDivisionId };
+  return { cutFrac, missedWeight: missed, divisionId: camp.cutDivisionId, relief };
 }
 
 // ---- Avance de una semana ----
@@ -290,6 +293,29 @@ export function finishFight(career) {
 }
 
 function player_(career) { return career.player; }
+
+// ---- Gestión del equipo (gastar plata) ----
+export function upgradeCoach(career) {
+  const p = career.player;
+  const next = p.coachLevel + 1;
+  if (next >= TUNING.COACH_LEVELS.length) return { ok: false, reason: 'máximo' };
+  const cost = TUNING.COACH_LEVELS[next].cost;
+  if (p.bankroll < cost) return { ok: false, reason: 'sin plata' };
+  p.bankroll -= cost;
+  p.coachLevel = next;
+  p.coachMult = TUNING.COACH_LEVELS[next].mult;
+  return { ok: true };
+}
+
+export function setNutritionist(career, on) {
+  career.player.hasNutritionist = !!on;
+  return { ok: true };
+}
+
+export function setManager(career, on) {
+  career.player.hasManager = !!on;
+  return { ok: true };
+}
 
 // ---- Fin de carrera + resumen ----
 export function endCareer(career, reason) {

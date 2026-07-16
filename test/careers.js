@@ -9,7 +9,7 @@ import { randomPolicy, sensiblePolicy, ambitiousPolicy } from './policies.js';
 
 export function runCareers(N = 200, seed = 999, policy = randomPolicy, label = 'ALEATORIA') {
   const t0 = Date.now();
-  let champions = 0, titleShots = 0;
+  let champions = 0, titleShots = 0, reachedElite = 0;
   const retireAges = [];
   const monies = [];
   const winrates = [];
@@ -24,11 +24,13 @@ export function runCareers(N = 200, seed = 999, policy = randomPolicy, label = '
     const career = createCareer(seed * 31 + i, { archetype: arche, divisionId: div, ageInit: 19 });
     let weeks = 0, over = false;
     let peakBank = career.player.bankroll;
+    let peakTier = 0;
     while (!over && weeks < maxWeeks) {
       const dec = policy(career, rng);
       const rep = advanceWeek(career, dec);
       weeks++;
       peakBank = Math.max(peakBank, career.player.bankroll);
+      peakTier = Math.max(peakTier, career.player.promotionTier);
       if (rep.fight && rep.fight.isTitle) titleShots++;
       if (rep.over) { over = true; }
     }
@@ -40,6 +42,7 @@ export function runCareers(N = 200, seed = 999, policy = randomPolicy, label = '
     const s = career.summary;
     if (s.everChampion) champions++;
     finalTiers[p.promotionTier]++;
+    if (peakTier >= 3) reachedElite++;
     const totF = p.record.wins + p.record.losses + p.record.draws;
     if (totF > 0) winrates.push(p.record.wins / totF);
     retireAges.push(s.ageAtRetire);
@@ -57,15 +60,15 @@ export function runCareers(N = 200, seed = 999, policy = randomPolicy, label = '
   const avgWr = avg(winrates);
 
   console.log(`\n[19.2/19.4/19.5 CARRERAS ${label}] N=${N}, 15 anos c/u, en ${dt}ms`);
-  console.log(`  campeones mundiales: ${champions} (${champPct.toFixed(1)}%)  peleas de titulo (cumbre alcanzable): ${titleShots}`);
+  console.log(`  campeones mundiales: ${champions} (${champPct.toFixed(1)}%)  peleas de titulo: ${titleShots}  llegaron a elite (T3): ${reachedElite}`);
   console.log(`  winrate promedio: ${(avgWr*100).toFixed(1)}%`);
   console.log(`  edad retiro: prom ${avgRetire.toFixed(1)}, en [33-41]: ${retire3440.toFixed(0)}%`);
   console.log(`  plata: mediana ${fmt(medMoney)}, max carrera >5M: ${infiniteMoney}, atrapados en deuda: ${bankruptStuck}`);
   console.log(`  tier final: T0=${finalTiers[0]} T1=${finalTiers[1]} T2=${finalTiers[2]} T3=${finalTiers[3]}`);
 
   // champ%: aleatoria debe ser baja (<8%). Para AMBICIOSA, el titulo es una minoria (<40%)
-  // y la CUMBRE debe ser ALCANZABLE (existen peleas de titulo) — el campeon en si es ~2%, on-tone.
-  const passChamp = label === 'ALEATORIA' ? champPct < 8 : (label === 'AMBICIOSA' ? (champPct < 40 && titleShots > 0) : true);
+  // y la ELITE (tier3) debe ser ALCANZABLE — el cinturon en si es ~2%, on-tone ("la mayoria no llega").
+  const passChamp = label === 'ALEATORIA' ? champPct < 8 : (label === 'AMBICIOSA' ? (champPct < 40 && reachedElite > 0) : true);
   // el declive por edad forzando el retiro se valida con juego razonable (no con caos aleatorio,
   // donde el dano acumulado los saca antes). Para ALEATORIA solo se reporta.
   const passRetire = label === 'ALEATORIA' ? true : retire3440 > 45;

@@ -46,6 +46,10 @@ export function deserializeCareer(data) {
     playerId: data.world.playerId, eventsLog: data.world.eventsLog || [],
   };
   const player = fmap.get(data.world.playerId);
+  if (player) { // backfill de campos agregados en versiones posteriores
+    if (player.coachLevel == null) player.coachLevel = 0;
+    if (player.coachMult == null) player.coachMult = 0.8;
+  }
   return {
     world, player, seed: data.seed,
     phase: data.phase, camp: data.camp, offers: data.offers || [],
