@@ -180,6 +180,7 @@ function weekTab() {
   if (!state._slots) state._slots = defaultSlots(false);
   const offers = c.offers;
   return `
+    ${eventsBanner()}
     ${condCard()}
     <div class="section-label">Ofertas de pelea</div>
     ${offers.length ? offers.map(offerCard).join('') : '<div class="card muted">No hay ofertas esta semana. Seguí entrenando o meté horas de laburo.</div>'}
@@ -197,6 +198,7 @@ function campTab() {
   if (!state._slots) state._slots = defaultSlots(true);
   const cut = cutInfo();
   return `
+    ${eventsBanner()}
     <div class="card">
       <div class="section-label">Camp — ${camp.weeksLeft} ${camp.weeksLeft === 1 ? 'semana' : 'semanas'} para la pelea</div>
       ${scoutHTML(opp, c.world, c.world.week)}
@@ -229,14 +231,27 @@ function cutInfo() {
   return { text, warn };
 }
 
+function eventsBanner() {
+  const ev = state._events;
+  if (!ev || !ev.length) return '';
+  return `<div class="card" style="border-color:var(--amber)">
+    <div class="section-label">Esta semana</div>
+    ${ev.map(e => `<div class="muted" style="padding:3px 0">${esc(e)}</div>`).join('')}
+  </div>`;
+}
+
 function condCard() {
   const p = state.career.player;
   const fat = p.fatigue > 70 ? 'quemado' : p.fatigue > 45 ? 'algo cansado' : 'fresco';
   const inj = p.injuries.filter(i => i.weeksLeft > 0);
-  const injTxt = inj.length ? inj.map(i => `${i.label} (${i.weeksLeft} sem)`).join(', ') : 'sin lesiones';
+  // resumir por tipo: peor (mas semanas) de cada uno, con conteo
+  const byType = {};
+  for (const i of inj) { if (!byType[i.type] || i.weeksLeft > byType[i.type].weeksLeft) byType[i.type] = i; }
+  const parts = Object.values(byType).sort((a, b) => b.weeksLeft - a.weeksLeft).map(i => `${i.label} (${i.weeksLeft} sem)`);
+  const injTxt = parts.length ? parts.slice(0, 2).join(', ') + (parts.length > 2 ? ` +${parts.length - 2}` : '') : 'sin lesiones';
   return `<div class="card">
     <div class="attr-row"><span class="attr-name">Estado físico</span><span class="attr-val">${fat}</span></div>
-    <div class="attr-row"><span class="attr-name">Lesiones</span><span class="attr-val" style="font-size:.85rem">${esc(injTxt)}</span></div>
+    <div class="attr-row"><span class="attr-name">Lesiones</span><span class="attr-val" style="font-size:.82rem;max-width:60%;text-align:right">${esc(injTxt)}</span></div>
   </div>`;
 }
 
@@ -305,9 +320,21 @@ function cloneSlot(s) { return { ...s }; }
 
 async function doAdvance(baseDec) {
   const c = state.career;
+  const tierBefore = c.player.promotionTier;
+  const rankBefore = c.world.divisions[c.player.divisionId].ranking.indexOf(c.player.id);
   const rep = advanceWeek(c, baseDec, { interactive: true });
   c._dateLabel = rep.dateLabel || c._dateLabel;
   state._slots = null;
+  // eventos de la semana para feedback
+  const ev = [];
+  for (const inj of (rep.injuries || [])) ev.push(`Te lesionaste: ${inj.label} (${inj.weeksLeft} sem).`);
+  if (c.phase === 'normal') {
+    if (c.player.promotionTier > tierBefore) ev.push(`Subiste de nivel: ${['Amateur', 'Regional', 'Nacional', 'Liga grande'][c.player.promotionTier]}.`);
+    const rankNow = c.world.divisions[c.player.divisionId].ranking.indexOf(c.player.id);
+    if (rankNow >= 0 && (rankBefore < 0)) ev.push(`Entraste al ranking: #${rankNow + 1}.`);
+  }
+  if (c.player.bankroll < 0) ev.push('Estás en rojo. Vas a tener que meter horas de laburo.');
+  state._events = ev;
   if (rep.over) { await clearGame(); routeSummary(); return; }
   if (rep.fightPending) { await persist(); routeFight(); return; }
   await persist();
