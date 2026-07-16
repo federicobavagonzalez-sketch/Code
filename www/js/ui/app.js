@@ -321,10 +321,12 @@ function cloneSlot(s) { return { ...s }; }
 async function doAdvance(baseDec) {
   const c = state.career;
   const tierBefore = c.player.promotionTier;
+  const phaseBefore = c.phase;
   const rankBefore = c.world.divisions[c.player.divisionId].ranking.indexOf(c.player.id);
   const rep = advanceWeek(c, baseDec, { interactive: true });
   c._dateLabel = rep.dateLabel || c._dateLabel;
-  state._slots = null;
+  // los slots persisten entre semanas (repetís el plan con un tap); se resetean al cambiar de fase
+  if (c.phase !== phaseBefore) state._slots = null;
   // eventos de la semana para feedback
   const ev = [];
   for (const inj of (rep.injuries || [])) ev.push(`Te lesionaste: ${inj.label} (${inj.weeksLeft} sem).`);
