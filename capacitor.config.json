@@ -1,0 +1,21 @@
+{
+  "appId": "com.cage.mma",
+  "appName": "CAGE",
+  "webDir": "www",
+  "backgroundColor": "#0a0a0b",
+  "plugins": {
+    "SplashScreen": {
+      "backgroundColor": "#0a0a0b",
+      "showSpinner": false,
+      "launchAutoHide": true
+    }
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#0a0a0b"
+  },
+  "server": {
+    "iosScheme": "capacitor",
+    "androidScheme": "https"
+  }
+}
