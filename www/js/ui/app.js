@@ -189,6 +189,7 @@ function weekTab() {
       <div class="slot-list" id="slots">${slotSelectors(false)}</div>
     </div>
     <button class="btn btn-primary btn-block" id="advance">Avanzar semana</button>
+    <button class="btn btn-block" id="skip">Repetir plan 4 semanas</button>
     <div class="faint center">La fatiga alta baja las ganancias y sube el riesgo de lesión. Descansar es una decisión.</div>`;
 }
 
@@ -215,7 +216,8 @@ function campTab() {
     </div>
     <div class="section-label">Semana de camp — 3 actividades</div>
     <div class="card"><div class="slot-list" id="slots">${slotSelectors(true)}</div></div>
-    <button class="btn btn-primary btn-block" id="advance">Avanzar semana</button>`;
+    <button class="btn btn-primary btn-block" id="advance">Avanzar semana</button>
+    <button class="btn btn-block" id="skipcamp">Saltar al día de la pelea</button>`;
 }
 
 function cutInfo() {
@@ -315,8 +317,37 @@ function wireWeek() {
   });
   on('[data-cut]', 'click', e => { state.career.camp.cutDivisionId = e.currentTarget.dataset.cut; routeHub('semana'); });
   on('#advance', 'click', () => doAdvance({ slots: state._slots.map(cloneSlot) }));
+  on('#skip', 'click', () => skipWeeks(4));
+  on('#skipcamp', 'click', () => skipWeeks(state.career.camp ? state.career.camp.weeksLeft : 1));
 }
 function cloneSlot(s) { return { ...s }; }
+function tierName(i) { return ['Amateur', 'Regional', 'Nacional', 'Liga grande'][i]; }
+
+// Avanza varias semanas repitiendo el plan actual. Frena ante lo importante.
+async function skipWeeks(maxN) {
+  const c = state.career;
+  const events = [];
+  for (let i = 0; i < maxN; i++) {
+    if (!state._slots) break;
+    const tierBefore = c.player.promotionTier;
+    const phaseBefore = c.phase;
+    const rankBefore = c.world.divisions[c.player.divisionId].ranking.indexOf(c.player.id);
+    const rep = advanceWeek(c, { slots: state._slots.map(cloneSlot) }, { interactive: true });
+    c._dateLabel = rep.dateLabel || c._dateLabel;
+    for (const inj of (rep.injuries || [])) events.push(`Te lesionaste: ${inj.label} (${inj.weeksLeft} sem).`);
+    if (c.phase !== phaseBefore) state._slots = null;
+    if (c.player.promotionTier > tierBefore) events.push(`Subiste de nivel: ${tierName(c.player.promotionTier)}.`);
+    const rankNow = c.world.divisions[c.player.divisionId].ranking.indexOf(c.player.id);
+    if (rankNow >= 0 && rankBefore < 0) events.push(`Entraste al ranking: #${rankNow + 1}.`);
+    if (rep.over) { state._events = events; await clearGame(); routeSummary(); return; }
+    if (rep.fightPending) { state._events = events; await persist(); routeFight(); return; }
+    if (rep.injuries && rep.injuries.length) break; // frenar ante una lesión para que reacciones
+  }
+  if (c.player.bankroll < 0) events.push('Estás en rojo. Vas a tener que meter horas de laburo.');
+  state._events = events;
+  await persist();
+  routeHub('semana');
+}
 
 async function doAdvance(baseDec) {
   const c = state.career;
