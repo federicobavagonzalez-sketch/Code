@@ -524,7 +524,7 @@ function renderFight() {
   render(`
     <div class="topbar">
       <div class="title" style="font-size:1.1rem">${c.camp.offer.isTitle ? 'PELEA DE TÍTULO' : 'PELEA'}</div>
-      <div class="round-badge">R${Math.max(1, f.round)}/${ctrl.rounds}</div>
+      <div class="round-badge">R${f.finished ? Math.max(1, f.round) : Math.min(f.round + 1, ctrl.rounds)}/${ctrl.rounds}</div>
     </div>
     <div class="screen" style="padding-bottom:12px">
       <div class="fight-head card">
@@ -533,7 +533,7 @@ function renderFight() {
         <div class="fighter-corner"><div class="nm">${esc(opp.name)}</div><div class="cond">${condB.dmg} · ${condB.sta}${condB.cut ? ' · ' + condB.cut : ''}</div></div>
       </div>
       <div class="fightlog card" id="log">${logHTML || '<div class="muted">Suena la campana.</div>'}</div>
-      ${controls}
+      <div id="fcontrols">${controls}</div>
     </div>`);
 
   const logEl = app.querySelector('#log');
@@ -543,17 +543,49 @@ function renderFight() {
   on('#fresult', 'click', showFightResult);
 }
 
-function playRound(intent) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function logClass(l) {
+  let cls = 'logline';
+  if (/^---/.test(l)) cls += ' rnd';
+  if (/Nocaut|Tap|para la pelea|médico|desploma|cae!/.test(l)) cls += ' big';
+  return cls;
+}
+function appendLogLine(logEl, l) {
+  const div = document.createElement('div');
+  div.className = logClass(l);
+  div.textContent = l.replace(/^--- | ---$/g, '');
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function fireHaptic(l, heavyRef) {
+  if (/Nocaut|desploma|cae!/.test(l)) { hapticKO(); heavyRef.heavy = true; }
+  else if (/conecta|castiga|contragolpea|rodilla|codo|sumisión|Tap/.test(l)) { hitLight(); }
+}
+
+async function playRound(intent) {
   const f = state.fight;
+  if (f.revealing) { f.skip = true; return; } // segundo tap: saltar la animación
   const res = f.ctrl.playRound(intent);
   f.round = f.ctrl.round;
-  // haptics segun lo que paso
-  let heavy = false;
+
+  // ocultar controles durante el round
+  const fc = app.querySelector('#fcontrols');
+  if (fc) fc.innerHTML = '<div class="muted center" style="padding:10px">El round transcurre…  <span class="faint">(tocá para saltar)</span></div>';
+  const logEl = app.querySelector('#log');
+  // limpiar el placeholder "Suena la campana"
+  if (logEl && f.log.length === 0) logEl.innerHTML = '';
+  if (fc) fc.addEventListener('click', () => { f.skip = true; }, { once: true });
+  if (logEl) logEl.addEventListener('click', () => { f.skip = true; }, { once: true });
+
+  f.revealing = true; f.skip = false;
+  const heavyRef = { heavy: false };
   for (const l of res.log) {
+    if (!f.skip) await sleep(/^---/.test(l) ? 260 : 430);
     f.log.push(l);
-    if (/Nocaut|desploma|cae!/.test(l)) { hapticKO(); heavy = true; }
-    else if (/conecta|castiga|contragolpea|rodilla|codo/.test(l)) { if (!heavy) hitLight(); }
+    if (logEl) appendLogLine(logEl, l);
+    fireHaptic(l, heavyRef);
   }
+  f.revealing = false;
   if (res.finished) { f.finished = true; f.result = res.result; }
   renderFight();
 }
