@@ -181,6 +181,7 @@ function weekTab() {
   if (!state._slots) state._slots = defaultSlots(false);
   const offers = c.offers;
   return `
+    ${introHint()}
     ${eventsBanner()}
     ${condCard()}
     <div class="section-label">Ofertas de pelea</div>
@@ -232,6 +233,18 @@ function cutInfo() {
   else if (frac <= TUNING.MAX_FRAC) { text = `Corte agresivo a ${div.name}: sos el más grande, pero llegás seco.`; warn = 'El corte castiga tu cardio y tu mentón el día de la pelea. Riesgo de no dar el peso.'; }
   else { text = `Corte brutal a ${div.name}.`; warn = 'Casi seguro fallás el pesaje o llegás vaciado. Muy peligroso.'; }
   return { text, warn };
+}
+
+function introHint() {
+  const c = state.career;
+  // solo antes de la primera pelea y si no se descartó
+  if (c._hintDismissed || c.history.length > 0 || c.world.week > 3) return '';
+  return `<div class="card" style="border-color:var(--amber)">
+    <div class="section-label">Cómo se juega</div>
+    <div class="muted" style="padding:4px 0">Repartís 3 actividades por semana: entrenás, sparreás (rápido pero riesgoso), descansás. Cuando te sientas listo, aceptás una pelea y entrás en camp de 8 semanas.</div>
+    <div class="muted" style="padding:4px 0">No vas a ver ningún número: leés a tu peleador por cómo se describe. El progreso se frena cuando tocás tu techo.</div>
+    <button class="btn btn-block" id="dismisshint" style="margin-top:8px">Entendido</button>
+  </div>`;
 }
 
 function eventsBanner() {
@@ -318,6 +331,7 @@ function wireWeek() {
   });
   on('[data-cut]', 'click', e => { state.career.camp.cutDivisionId = e.currentTarget.dataset.cut; routeHub('semana'); });
   on('#advance', 'click', () => doAdvance({ slots: state._slots.map(cloneSlot) }));
+  on('#dismisshint', 'click', () => { state.career._hintDismissed = true; routeHub('semana'); });
   on('#skip', 'click', () => skipWeeks(4));
   on('#skipcamp', 'click', () => skipWeeks(state.career.camp ? state.career.camp.weeksLeft : 1));
 }
