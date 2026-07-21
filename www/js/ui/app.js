@@ -163,6 +163,7 @@ function wireHub() {
   on('.tabbar [data-tab]', 'click', e => routeHub(e.currentTarget.dataset.tab));
   if (state.tab === 'semana') wireWeek();
   if (state.tab === 'perfil') wireProfile();
+  if (state.tab === 'ranking') on('[data-rankdiv]', 'click', e => { state.rankDiv = e.currentTarget.dataset.rankdiv; routeHub('ranking'); });
 }
 
 function wireProfile() {
@@ -396,26 +397,33 @@ function gymTab() {
 // ---- pestaña RANKING ----
 function rankingTab() {
   const c = state.career, p = c.player;
-  const dv = c.world.divisions[p.divisionId];
+  const selId = state.rankDiv || p.divisionId;
+  const dv = c.world.divisions[selId];
   const champ = c.world.fighters.get(dv.champId);
   const rows = dv.ranking.map((id, i) => {
     const f = c.world.fighters.get(id);
     const me = id === p.id ? ' style="color:var(--amber-bright)"' : '';
     return `<div class="attr-row"${me}><span class="attr-name">#${i + 1} ${esc(f.name)}</span><span class="attr-val" style="font-size:.85rem">${recordStr(f)}</span></div>`;
   }).join('');
-  const div = TUNING.DIVISIONS.find(d => d.id === p.divisionId);
+  const div = TUNING.DIVISIONS.find(d => d.id === selId);
   const myRank = dv.ranking.indexOf(p.id);
+  const isMine = selId === p.divisionId;
+  const chips = TUNING.DIVISIONS.map(d => `<button class="chip ${d.id === selId ? 'hot' : ''}" data-rankdiv="${d.id}">${d.name}${d.id === p.divisionId ? ' ★' : ''}</button>`).join('');
   return `
     ${newsFeed()}
+    <div class="card">
+      <div class="section-label">Divisiones</div>
+      <div class="tag-line">${chips}</div>
+    </div>
     <div class="card">
       <div class="section-label">Campeón — ${div.name}</div>
       <div class="fighter-corner" style="text-align:left"><div class="nm">${champ ? esc(champ.name) : '—'}</div><div class="cond">${champ ? recordStr(champ) : ''}</div></div>
     </div>
     <div class="card">
-      <div class="section-label">Top ${TUNING.RANK_SIZE}</div>
+      <div class="section-label">Top ${TUNING.RANK_SIZE} — ${div.name}</div>
       ${rows}
     </div>
-    <div class="faint center">${myRank >= 0 ? 'Estás en el ranking.' : 'Todavía no entrás al top ' + TUNING.RANK_SIZE + '.'}</div>`;
+    <div class="faint center">${isMine ? (myRank >= 0 ? 'Estás en el ranking.' : 'Todavía no entrás al top ' + TUNING.RANK_SIZE + '.') : 'Tu división es ' + TUNING.DIVISIONS.find(d => d.id === p.divisionId).name + ' ★.'}</div>`;
 }
 
 function newsFeed() {
