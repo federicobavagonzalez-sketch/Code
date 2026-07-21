@@ -254,7 +254,19 @@ function checkRetirement(world, f) {
   if (world.rng.chance(p / 8)) { // p es anual aprox; se evalua semanal
     f.retired = true;
     f.retiredReason = age >= 37 ? 'edad' : (f.careerDamage > 1500 ? 'daño' : 'sin ofertas');
+    // noticia si era alguien (rankeado o campeon)
+    const dv = world.divisions[f.divisionId];
+    const wasChamp = dv && dv.champId === f.id;
+    const wasRanked = dv && dv.ranking.includes(f.id);
+    if (wasChamp || wasRanked) {
+      pushEvent(world, f.divisionId, `${f.name} (${f.record.wins}-${f.record.losses}) se retira${wasChamp ? ' siendo campeón' : ''}.`);
+    }
   }
+}
+
+export function pushEvent(world, divisionId, text) {
+  world.eventsLog.push({ week: world.week, divisionId, text });
+  if (world.eventsLog.length > 60) world.eventsLog.splice(0, world.eventsLog.length - 60);
 }
 
 // ---- Auto-entrenamiento semanal barato de un NPC ----
@@ -336,7 +348,12 @@ function simulateTitleFights(world) {
     if (champ.injuries.some(i => i.weeksLeft > 0) || contender.injuries.some(i => i.weeksLeft > 0)) continue;
     const res = simulateFight(champ, contender, { rng: world.rng.fork(week * 777 + champ.id), rounds: 5, verbose: false, currentWeek: week });
     processFightOutcome(world, champ, contender, res);
-    if (res.winnerSide === 'B') { dv.champId = contender.id; world.eventsLog.push({ week, type: 'title', text: `${contender.name} es el nuevo campeón de ${d.name}.` }); }
+    if (res.winnerSide === 'B') {
+      dv.champId = contender.id;
+      pushEvent(world, d.id, `${contender.name} destrona a ${champ.name} y es el nuevo campeón de ${d.name}.`);
+    } else if (res.winnerSide === 'A') {
+      pushEvent(world, d.id, `${champ.name} retiene el título de ${d.name} ante ${contender.name}.`);
+    }
   }
 }
 

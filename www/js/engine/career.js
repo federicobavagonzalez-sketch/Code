@@ -3,7 +3,7 @@
 import { TUNING } from './tuning.js';
 import { clamp } from './rng.js';
 import { createFighter, ageYears, chinEffectiveCap } from './fighter.js';
-import { generateWorld, worldTick, processFightOutcome, recomputeRankings, divisionFighters, overallSkill } from './world.js';
+import { generateWorld, worldTick, processFightOutcome, recomputeRankings, divisionFighters, overallSkill, pushEvent } from './world.js';
 import { applySlot, passiveRecover, applyAgeDecay, recoverInjuries } from './progression.js';
 import { simulateFight, aiChooseIntent, createFightController } from './fight-engine.js';
 import { computePurse, fightIncome, applyMissWeight, managerCut, chargeWeekly } from './economy.js';
@@ -235,7 +235,11 @@ function applyFightOutcome(career, res, setup) {
 
   const dv = world.divisions[player.divisionId];
   let titleWon = false;
-  if (camp.offer.isTitle && playerWon) { dv.champId = player.id; titleWon = true; }
+  if (camp.offer.isTitle && playerWon) {
+    dv.champId = player.id; titleWon = true;
+    const divName = TUNING.DIVISIONS.find(d => d.id === player.divisionId).name;
+    pushEvent(world, player.divisionId, `${player.name} conquista el título de ${divName}.`);
+  }
 
   processFightOutcome(world, player, opp, res);
   recomputeRankings(world);

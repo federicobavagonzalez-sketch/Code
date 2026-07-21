@@ -406,6 +406,7 @@ function rankingTab() {
   const div = TUNING.DIVISIONS.find(d => d.id === p.divisionId);
   const myRank = dv.ranking.indexOf(p.id);
   return `
+    ${newsFeed()}
     <div class="card">
       <div class="section-label">Campeón — ${div.name}</div>
       <div class="fighter-corner" style="text-align:left"><div class="nm">${champ ? esc(champ.name) : '—'}</div><div class="cond">${champ ? recordStr(champ) : ''}</div></div>
@@ -415,6 +416,26 @@ function rankingTab() {
       ${rows}
     </div>
     <div class="faint center">${myRank >= 0 ? 'Estás en el ranking.' : 'Todavía no entrás al top ' + TUNING.RANK_SIZE + '.'}</div>`;
+}
+
+function newsFeed() {
+  const c = state.career;
+  const log = c.world.eventsLog || [];
+  if (!log.length) return '';
+  const mine = c.player.divisionId;
+  // ultimas 10, priorizando tu division, mas nuevas primero
+  const recent = log.slice(-24).reverse();
+  const ordered = [...recent.filter(e => e.divisionId === mine), ...recent.filter(e => e.divisionId !== mine)].slice(0, 10);
+  const week = c.world.week;
+  return `<div class="card">
+    <div class="section-label">Noticias del mundo</div>
+    ${ordered.map(e => {
+      const ago = Math.max(0, week - e.week);
+      const when = ago === 0 ? 'esta semana' : `hace ${ago} sem`;
+      const cls = e.divisionId === mine ? 'attr-name' : 'muted';
+      return `<div class="attr-row"><span class="${cls}" style="font-size:.85rem;max-width:74%">${esc(e.text)}</span><span class="faint">${when}</span></div>`;
+    }).join('')}
+  </div>`;
 }
 
 // ---- pestaña PERFIL ----
